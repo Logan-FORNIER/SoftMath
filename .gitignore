@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Vite build
+dist/
+dist-ssr/
+*.local
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
