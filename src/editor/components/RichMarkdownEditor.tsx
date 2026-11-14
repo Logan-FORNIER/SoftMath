@@ -10,6 +10,7 @@ import { SlashCommand } from '../extensions/SlashCommand';
 import { SoftBlockMath } from '../extensions/SoftBlockMath';
 import { SoftFunctionPlot } from '../extensions/SoftFunctionPlot';
 import { SoftMathEval } from '../extensions/SoftMathEval';
+import { SoftVariationTable } from '../extensions/SoftVariationTable';
 import {
   getExcalidrawStorage,
   SoftExcalidraw,
@@ -268,6 +269,7 @@ export const RichMarkdownEditor = forwardRef<
       SoftExcalidraw,
       AcademicBlock,
       SoftFunctionPlot,
+      SoftVariationTable,
       SoftMathEval,
       SlashCommand,
       softAiShortcut,

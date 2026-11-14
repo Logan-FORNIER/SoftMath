@@ -10,6 +10,20 @@ export interface PlotCurveConfig {
   showDerivative?: boolean;
 }
 
+export interface PlotParameter {
+  name: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+}
+
+export interface PlotTangentConfig {
+  enabled: boolean;
+  x0: number;
+  curveId?: string;
+}
+
 export interface FunctionPlotConfig {
   title: string;
   xMin: number;
@@ -19,6 +33,9 @@ export interface FunctionPlotConfig {
   showGrid: boolean;
   integralFrom?: string;
   integralTo?: string;
+  showSpecialPoints?: boolean;
+  tangent?: PlotTangentConfig;
+  parameters?: PlotParameter[];
   curves: PlotCurveConfig[];
 }
 
@@ -41,6 +58,9 @@ export function createDefaultPlotConfig(): FunctionPlotConfig {
     showGrid: true,
     integralFrom: '',
     integralTo: '',
+    showSpecialPoints: false,
+    tangent: { enabled: false, x0: 0 },
+    parameters: [],
     curves: [
       {
         id: 'curve-1',
@@ -97,6 +117,49 @@ export function parseFunctionPlotConfig(rawSpec: string): FunctionPlotConfig {
           }))
         : fallback.curves;
 
+    const parameters: PlotParameter[] = Array.isArray(parsed.parameters)
+      ? parsed.parameters
+          .filter(
+            (p): p is PlotParameter =>
+              Boolean(p) && typeof p.name === 'string' && Boolean(p.name.trim())
+          )
+          .map((p) => {
+            const min =
+              typeof p.min === 'number' && Number.isFinite(p.min) ? p.min : -5;
+            const max =
+              typeof p.max === 'number' && Number.isFinite(p.max) && p.max > min
+                ? p.max
+                : min + 10;
+            const step =
+              typeof p.step === 'number' && Number.isFinite(p.step) && p.step > 0
+                ? p.step
+                : 0.1;
+            const value =
+              typeof p.value === 'number' && Number.isFinite(p.value)
+                ? p.value
+                : 1;
+            return {
+              name: p.name.trim(),
+              value,
+              min,
+              max,
+              step,
+            };
+          })
+      : [];
+
+    const tangent: PlotTangentConfig = {
+      enabled: Boolean(parsed.tangent?.enabled),
+      x0:
+        typeof parsed.tangent?.x0 === 'number' && Number.isFinite(parsed.tangent.x0)
+          ? parsed.tangent.x0
+          : 0,
+      curveId:
+        typeof parsed.tangent?.curveId === 'string'
+          ? parsed.tangent.curveId
+          : undefined,
+    };
+
     return {
       title: typeof parsed.title === 'string' ? parsed.title : fallback.title,
       xMin,
@@ -109,6 +172,9 @@ export function parseFunctionPlotConfig(rawSpec: string): FunctionPlotConfig {
         typeof parsed.integralFrom === 'string' ? parsed.integralFrom : '',
       integralTo:
         typeof parsed.integralTo === 'string' ? parsed.integralTo : '',
+      showSpecialPoints: Boolean(parsed.showSpecialPoints),
+      tangent,
+      parameters,
       curves,
     };
   } catch {

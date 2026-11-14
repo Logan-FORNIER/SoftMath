@@ -7,6 +7,7 @@ import {
   type ComponentType,
 } from 'react';
 import {
+  ArrowUpDown,
   BookOpen,
   Code2,
   GraduationCap,
@@ -27,6 +28,7 @@ export type SlashCommandIconId =
   | 'drawing'
   | 'math'
   | 'plot'
+  | 'variation'
   | 'matrix'
   | 'definition'
   | 'theorem'
@@ -63,6 +65,7 @@ const ICONS: Record<SlashCommandIconId, ComponentType<{ className?: string }>> =
   drawing: PenTool,
   math: Sigma,
   plot: TrendingUp,
+  variation: ArrowUpDown,
   matrix: Grid3X3,
   definition: BookOpen,
   theorem: Landmark,

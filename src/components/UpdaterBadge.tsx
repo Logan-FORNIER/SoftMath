@@ -14,7 +14,7 @@ export interface UpdaterBadgeProps {
 
 export const UpdaterBadge: React.FC<UpdaterBadgeProps> = ({
   status = 'idle',
-  currentVersion = '0.1.0',
+  currentVersion = '0.2.0',
   availableVersion = null,
   downloadProgress = null,
   errorMessage = null,

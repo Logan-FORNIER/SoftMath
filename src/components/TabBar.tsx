@@ -1,12 +1,14 @@
-import { FileText, Plus, X } from 'lucide-react';
+import { Columns2, FileText, Plus, X } from 'lucide-react';
 import type { OpenNote } from '../types/notes';
 
 interface TabBarProps {
   tabs: OpenNote[];
   activeTabPath: string | null;
+  secondaryTabPath?: string | null;
   dirtyPaths: Set<string>;
   rootPath: string;
   onSelectTab: (path: string) => void;
+  onOpenSplitTab?: (path: string) => void;
   onCloseTab: (path: string) => void;
   onCloseOtherTabs: (path: string) => void;
   onCreateNote: () => void;
@@ -25,9 +27,11 @@ function getRelativeTooltip(fullPath: string, rootPath: string): string {
 export function TabBar({
   tabs,
   activeTabPath,
+  secondaryTabPath = null,
   dirtyPaths,
   rootPath,
   onSelectTab,
+  onOpenSplitTab,
   onCloseTab,
   onCloseOtherTabs,
   onCreateNote,
@@ -44,6 +48,7 @@ export function TabBar({
     >
       {tabs.map((tab) => {
         const isActive = tab.path === activeTabPath;
+        const isSecondary = tab.path === secondaryTabPath && !isActive;
         const isDirty = dirtyPaths.has(tab.path);
         const tooltip = getRelativeTooltip(tab.path, rootPath);
 
@@ -52,8 +57,15 @@ export function TabBar({
             key={tab.path}
             role="tab"
             aria-selected={isActive}
-            title={`${tooltip}\nClic milieu pour fermer • Double-clic pour garder uniquement cet onglet`}
-            onClick={() => onSelectTab(tab.path)}
+            title={`${tooltip}\nClic milieu pour fermer • Double-clic pour garder uniquement cet onglet • Alt+Clic pour ouvrir en vue scindée`}
+            onClick={(event) => {
+              if (event.altKey && onOpenSplitTab) {
+                event.preventDefault();
+                onOpenSplitTab(tab.path);
+                return;
+              }
+              onSelectTab(tab.path);
+            }}
             onDoubleClick={() => onCloseOtherTabs(tab.path)}
             onAuxClick={(event) => {
               if (event.button === 1) {
@@ -64,16 +76,22 @@ export function TabBar({
             className={`group relative flex h-8 max-w-[190px] min-w-[96px] shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border px-2.5 text-xs transition-colors select-none ${
               isActive
                 ? 'border-stone-200/90 border-b-white bg-white font-medium text-stone-900 shadow-2xs dark:border-zinc-800 dark:border-b-[#1E1E22] dark:bg-[#1E1E22] dark:text-zinc-100'
-                : 'border-transparent bg-transparent text-stone-500 hover:bg-stone-200/50 hover:text-stone-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200'
+                : isSecondary
+                  ? 'border-indigo-200/70 bg-indigo-50/40 text-indigo-700 hover:bg-indigo-50/80 dark:border-indigo-900/50 dark:bg-indigo-950/25 dark:text-indigo-300 dark:hover:bg-indigo-950/40'
+                  : 'border-transparent bg-transparent text-stone-500 hover:bg-stone-200/50 hover:text-stone-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200'
             }`}
           >
-            <FileText
-              className={`h-3.5 w-3.5 shrink-0 ${
-                isActive
-                  ? 'text-indigo-500 dark:text-indigo-400'
-                  : 'text-stone-400 dark:text-zinc-500'
-              }`}
-            />
+            {isSecondary ? (
+              <Columns2 className="h-3.5 w-3.5 shrink-0 text-indigo-500 dark:text-indigo-400" />
+            ) : (
+              <FileText
+                className={`h-3.5 w-3.5 shrink-0 ${
+                  isActive
+                    ? 'text-indigo-500 dark:text-indigo-400'
+                    : 'text-stone-400 dark:text-zinc-500'
+                }`}
+              />
+            )}
             <span className="min-w-0 flex-1 truncate">{tab.displayName}</span>
 
             {isDirty && (

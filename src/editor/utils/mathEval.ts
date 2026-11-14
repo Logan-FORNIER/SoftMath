@@ -570,11 +570,65 @@ export function evaluateLatexField(
   };
 }
 
+const BUILTIN_PLOT_CONSTANTS = new Set([
+  'x',
+  'e',
+  'E',
+  'pi',
+  'PI',
+  'tau',
+  'phi',
+  'i',
+  'Infinity',
+  'NaN',
+  'true',
+  'false',
+]);
+
+export interface PlotSpecialPoint {
+  kind: 'root' | 'extremum' | 'intersection';
+  x: number;
+  y: number;
+  label: string;
+  color: string;
+}
+
+/**
+ * Détecte les symboles libres utilisables comme paramètres interactifs (ex: a, b, k)
+ * dans une liste d'expressions de courbes.
+ */
+export function extractPlotCandidateParams(expressions: string[]): string[] {
+  const found = new Set<string>();
+  for (const rawExpr of expressions) {
+    const normalized = normalizeMathExpression(rawExpr);
+    if (!normalized) continue;
+    try {
+      const ast = parse(normalized);
+      ast.traverse((node, path) => {
+        if (
+          node.type === 'SymbolNode' &&
+          path !== 'fn' &&
+          'name' in node &&
+          typeof node.name === 'string' &&
+          !BUILTIN_PLOT_CONSTANTS.has(node.name) &&
+          /^[a-zA-Z][a-zA-Z0-9_]{0,11}$/.test(node.name)
+        ) {
+          found.add(node.name);
+        }
+      });
+    } catch {
+      // Ignore partial syntax while typing
+    }
+  }
+  return Array.from(found);
+}
+
 /**
  * Compile une expression f(x) avec normalisation LaTeX -> mathjs pour les graphes 2D.
  */
 export function compilePlotFunction(
-  rawExpr: string
+  rawExpr: string,
+  scope: Record<string, number> = {}
 ): { evaluateAt: (x: number) => number; error?: undefined } | { evaluateAt?: undefined; error: string } {
   const normalized = normalizeMathExpression(rawExpr);
   if (!normalized) {
@@ -582,12 +636,12 @@ export function compilePlotFunction(
   }
   try {
     const compiled = compile(normalized);
-    // Test rapide pour valider les symboles
-    compiled.evaluate({ x: 1 });
+    // Test rapide pour valider les symboles avec les paramètres actifs
+    compiled.evaluate({ x: 1, ...scope });
     return {
       evaluateAt: (x: number) => {
         try {
-          const val = compiled.evaluate({ x });
+          const val = compiled.evaluate({ x, ...scope });
           return typeof val === 'number' && Number.isFinite(val) ? val : Number.NaN;
         } catch {
           return Number.NaN;
@@ -604,7 +658,10 @@ export function compilePlotFunction(
 /**
  * Compile automatiquement la dérivée symbolique f'(x) via mathjs.
  */
-export function compilePlotDerivative(rawExpr: string): {
+export function compilePlotDerivative(
+  rawExpr: string,
+  scope: Record<string, number> = {}
+): {
   evaluateAt: (x: number) => number;
   formula: string;
 } | null {
@@ -619,7 +676,7 @@ export function compilePlotDerivative(rawExpr: string): {
       formula: derivNode.toString(),
       evaluateAt: (x: number) => {
         try {
-          const val = compiled.evaluate({ x });
+          const val = compiled.evaluate({ x, ...scope });
           return typeof val === 'number' && Number.isFinite(val) ? val : Number.NaN;
         } catch {
           return Number.NaN;
@@ -629,6 +686,240 @@ export function compilePlotDerivative(rawExpr: string): {
   } catch {
     return null;
   }
+}
+
+/**
+ * Estime la dérivée f'(x0) numériquement si la dérivée symbolique n'est pas disponible.
+ */
+export function estimatePlotDerivativeAt(
+  fn: (x: number) => number,
+  x0: number
+): number | null {
+  const h = Math.max(1e-5, Math.abs(x0) * 1e-5);
+  const fPlus = fn(x0 + h);
+  const fMinus = fn(x0 - h);
+  if (!Number.isFinite(fPlus) || !Number.isFinite(fMinus)) {
+    return null;
+  }
+  const slope = (fPlus - fMinus) / (2 * h);
+  return Number.isFinite(slope) ? slope : null;
+}
+
+function refineBisectionZero(
+  fn: (x: number) => number,
+  a: number,
+  b: number,
+  fa: number
+): number | null {
+  let lo = a;
+  let hi = b;
+  let fLo = fa;
+  for (let i = 0; i < 28; i += 1) {
+    const mid = 0.5 * (lo + hi);
+    const fMid = fn(mid);
+    if (!Number.isFinite(fMid)) return null;
+    if (Math.abs(fMid) < 1e-9) return mid;
+    if ((fLo > 0 && fMid > 0) || (fLo < 0 && fMid < 0)) {
+      lo = mid;
+      fLo = fMid;
+    } else {
+      hi = mid;
+    }
+  }
+  return 0.5 * (lo + hi);
+}
+
+function refineGoldenExtremum(
+  fn: (x: number) => number,
+  a: number,
+  b: number,
+  isMax: boolean
+): number {
+  const phi = (Math.sqrt(5) - 1) / 2;
+  let lo = a;
+  let hi = b;
+  let x1 = hi - phi * (hi - lo);
+  let x2 = lo + phi * (hi - lo);
+  let f1 = fn(x1);
+  let f2 = fn(x2);
+
+  for (let i = 0; i < 26; i += 1) {
+    const pickLeft = isMax ? f1 > f2 : f1 < f2;
+    if (pickLeft) {
+      hi = x2;
+      x2 = x1;
+      f2 = f1;
+      x1 = hi - phi * (hi - lo);
+      f1 = fn(x1);
+    } else {
+      lo = x1;
+      x1 = x2;
+      f1 = f2;
+      x2 = lo + phi * (hi - lo);
+      f2 = fn(x2);
+    }
+  }
+  return 0.5 * (lo + hi);
+}
+
+/**
+ * Détecte zéros, extrema locaux et intersections dans la fenêtre [xMin, xMax].
+ */
+export function findSpecialPlotPoints(
+  curves: {
+    id: string;
+    color: string;
+    evaluateAt: (x: number) => number;
+  }[],
+  xMin: number,
+  xMax: number,
+  yMin: number,
+  yMax: number
+): PlotSpecialPoint[] {
+  const xSpan = xMax - xMin;
+  const ySpan = yMax - yMin;
+  if (xSpan <= 0 || ySpan <= 0 || curves.length === 0) return [];
+
+  const steps = 320;
+  const dx = xSpan / steps;
+  const tolX = xSpan * 0.015;
+  const points: PlotSpecialPoint[] = [];
+
+  const pushUnique = (candidate: PlotSpecialPoint) => {
+    if (
+      !Number.isFinite(candidate.x) ||
+      !Number.isFinite(candidate.y) ||
+      candidate.y < yMin - ySpan * 0.25 ||
+      candidate.y > yMax + ySpan * 0.25
+    ) {
+      return;
+    }
+    const duplicate = points.some(
+      (p) =>
+        p.kind === candidate.kind &&
+        Math.abs(p.x - candidate.x) < tolX &&
+        Math.abs(p.y - candidate.y) < ySpan * 0.02
+    );
+    if (!duplicate && points.length < 28) {
+      points.push(candidate);
+    }
+  };
+
+  for (let cIdx = 0; cIdx < curves.length; cIdx += 1) {
+    const curve = curves[cIdx];
+    const ys = Array.from({ length: steps + 1 }, (_, i) =>
+      curve.evaluateAt(xMin + i * dx)
+    );
+
+    for (let i = 0; i < steps; i += 1) {
+      const x0 = xMin + i * dx;
+      const x1 = xMin + (i + 1) * dx;
+      const y0 = ys[i];
+      const y1 = ys[i + 1];
+      if (!Number.isFinite(y0) || !Number.isFinite(y1)) continue;
+
+      // Évite les faux positifs sur asymptotes verticales
+      if (Math.abs(y1 - y0) > ySpan * 1.4) continue;
+
+      if (Math.abs(y0) < 1e-6) {
+        pushUnique({
+          kind: 'root',
+          x: x0,
+          y: 0,
+          label: `Zéro (${x0.toFixed(2)} ; 0)`,
+          color: curve.color,
+        });
+      } else if ((y0 > 0 && y1 < 0) || (y0 < 0 && y1 > 0)) {
+        const rootX = refineBisectionZero(curve.evaluateAt, x0, x1, y0);
+        if (rootX !== null) {
+          const rootY = curve.evaluateAt(rootX);
+          if (Number.isFinite(rootY) && Math.abs(rootY) < ySpan * 0.1) {
+            pushUnique({
+              kind: 'root',
+              x: rootX,
+              y: 0,
+              label: `Zéro (${rootX.toFixed(2)} ; 0)`,
+              color: curve.color,
+            });
+          }
+        }
+      }
+
+      if (i > 0) {
+        const yPrev = ys[i - 1];
+        if (!Number.isFinite(yPrev) || Math.abs(y0 - yPrev) > ySpan * 1.2) {
+          continue;
+        }
+        const dPrev = y0 - yPrev;
+        const dNext = y1 - y0;
+        if ((dPrev > 1e-9 && dNext < -1e-9) || (dPrev < -1e-9 && dNext > 1e-9)) {
+          const isMax = dPrev > 0;
+          const extX = refineGoldenExtremum(
+            curve.evaluateAt,
+            xMin + (i - 1) * dx,
+            x1,
+            isMax
+          );
+          const extY = curve.evaluateAt(extX);
+          if (Number.isFinite(extY)) {
+            pushUnique({
+              kind: 'extremum',
+              x: extX,
+              y: extY,
+              label: `${isMax ? 'Max' : 'Min'} (${extX.toFixed(2)} ; ${extY.toFixed(2)})`,
+              color: curve.color,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Intersections entre paires de courbes visibles
+  for (let i = 0; i < curves.length; i += 1) {
+    for (let j = i + 1; j < curves.length; j += 1) {
+      const cA = curves[i];
+      const cB = curves[j];
+      const diffAt = (x: number) => cA.evaluateAt(x) - cB.evaluateAt(x);
+      let prevD = diffAt(xMin);
+      for (let s = 0; s < steps; s += 1) {
+        const x0 = xMin + s * dx;
+        const x1 = xMin + (s + 1) * dx;
+        const nextD = diffAt(x1);
+        if (
+          Number.isFinite(prevD) &&
+          Number.isFinite(nextD) &&
+          Math.abs(nextD - prevD) < ySpan * 1.4 &&
+          ((prevD > 0 && nextD < 0) || (prevD < 0 && nextD > 0) || Math.abs(prevD) < 1e-6)
+        ) {
+          const ix =
+            Math.abs(prevD) < 1e-6
+              ? x0
+              : refineBisectionZero(diffAt, x0, x1, prevD);
+          if (ix !== null) {
+            const iyA = cA.evaluateAt(ix);
+            const iyB = cB.evaluateAt(ix);
+            if (
+              Number.isFinite(iyA) &&
+              Number.isFinite(iyB) &&
+              Math.abs(iyA - iyB) < ySpan * 0.1
+            ) {
+              pushUnique({
+                kind: 'intersection',
+                x: ix,
+                y: iyA,
+                label: `Intersection (${ix.toFixed(2)} ; ${iyA.toFixed(2)})`,
+                color: '#0f172a',
+              });
+            }
+          }
+        }
+        prevD = nextD;
+      }
+    }
+  }
+
+  return points;
 }
 
 /**

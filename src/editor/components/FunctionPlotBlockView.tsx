@@ -7,12 +7,14 @@ import {
 } from 'react';
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
 import {
+  Crosshair,
   Eye,
   EyeOff,
   Grid,
   Plus,
   RotateCcw,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   TrendingUp,
   ZoomIn,
@@ -25,10 +27,14 @@ import {
   serializeFunctionPlotConfig,
   type FunctionPlotConfig,
   type PlotCurveConfig,
+  type PlotParameter,
 } from '../extensions/SoftFunctionPlot';
 import {
   compilePlotDerivative,
   compilePlotFunction,
+  estimatePlotDerivativeAt,
+  extractPlotCandidateParams,
+  findSpecialPlotPoints,
   integrateSimpson,
   normalizeMathExpression,
 } from '../utils/mathEval';
@@ -149,6 +155,9 @@ export function FunctionPlotBlockView({
     Boolean(node.attrs.autoConfigure)
   );
   const [hoverX, setHoverX] = useState<number | null>(null);
+  const [hoveredSpecialLabel, setHoveredSpecialLabel] = useState<string | null>(
+    null
+  );
   const [isDragging, setIsDragging] = useState(false);
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -178,9 +187,24 @@ export function FunctionPlotBlockView({
   const toSvgY = (y: number) =>
     SVG_HEIGHT - ((y - config.yMin) / ySpan) * SVG_HEIGHT;
 
+  const paramScope = useMemo(() => {
+    const scope: Record<string, number> = {};
+    for (const param of config.parameters ?? []) {
+      scope[param.name] = param.value;
+    }
+    return scope;
+  }, [config.parameters]);
+
+  const missingCandidateParams = useMemo(() => {
+    const existing = new Set((config.parameters ?? []).map((p) => p.name));
+    return extractPlotCandidateParams(
+      config.curves.map((c) => c.expression)
+    ).filter((name) => !existing.has(name));
+  }, [config.curves, config.parameters]);
+
   const compiledCurves = useMemo(() => {
     return config.curves.map((curve) => {
-      const main = compilePlotFunction(curve.expression);
+      const main = compilePlotFunction(curve.expression, paramScope);
       const path = main.evaluateAt
         ? buildCurvePath(
             main.evaluateAt,
@@ -192,7 +216,7 @@ export function FunctionPlotBlockView({
         : '';
       const deriv =
         curve.showDerivative && curve.visible && main.evaluateAt
-          ? compilePlotDerivative(curve.expression)
+          ? compilePlotDerivative(curve.expression, paramScope)
           : null;
       const derivPath = deriv
         ? buildCurvePath(
@@ -212,7 +236,89 @@ export function FunctionPlotBlockView({
         derivPath,
       };
     });
-  }, [config]);
+  }, [config, paramScope]);
+
+  // Tangente au point x0 sur la courbe sélectionnée (ou première courbe visible)
+  const tangentInfo = useMemo(() => {
+    if (!config.tangent?.enabled) return null;
+    const visibleCurves = compiledCurves.filter(
+      (c) => c.curve.visible && c.evaluateAt
+    );
+    if (visibleCurves.length === 0) return null;
+    const target =
+      visibleCurves.find((c) => c.curve.id === config.tangent?.curveId) ??
+      visibleCurves[0];
+    if (!target.evaluateAt) return null;
+
+    const x0 = config.tangent.x0;
+    const y0 = target.evaluateAt(x0);
+    if (!Number.isFinite(y0)) return null;
+
+    const slope =
+      target.deriv?.evaluateAt(x0) ??
+      estimatePlotDerivativeAt(target.evaluateAt, x0);
+    if (slope === null || !Number.isFinite(slope)) return null;
+
+    const intercept = y0 - slope * x0;
+    const yLeft = slope * config.xMin + intercept;
+    const yRight = slope * config.xMax + intercept;
+
+    const absP = Math.abs(intercept);
+    const equation =
+      Math.abs(slope) < 1e-4
+        ? `y = ${y0.toFixed(2)}`
+        : Math.abs(intercept) < 1e-4
+          ? `y = ${slope.toFixed(2)}x`
+          : `y = ${slope.toFixed(2)}x ${intercept >= 0 ? '+' : '−'} ${absP.toFixed(2)}`;
+
+    return {
+      x0,
+      y0,
+      slope,
+      equation,
+      color: target.curve.color,
+      curveId: target.curve.id,
+      x1Px: toSvgX(config.xMin),
+      y1Px: toSvgY(yLeft),
+      x2Px: toSvgX(config.xMax),
+      y2Px: toSvgY(yRight),
+      ptX: toSvgX(x0),
+      ptY: toSvgY(y0),
+    };
+  }, [
+    config.tangent,
+    config.xMin,
+    config.xMax,
+    config.yMin,
+    config.yMax,
+    compiledCurves,
+  ]);
+
+  // Points remarquables : racines, extrema et intersections
+  const specialPoints = useMemo(() => {
+    if (!config.showSpecialPoints) return [];
+    const active = compiledCurves
+      .filter((c) => c.curve.visible && c.evaluateAt)
+      .map((c) => ({
+        id: c.curve.id,
+        color: c.curve.color,
+        evaluateAt: c.evaluateAt!,
+      }));
+    return findSpecialPlotPoints(
+      active,
+      config.xMin,
+      config.xMax,
+      config.yMin,
+      config.yMax
+    );
+  }, [
+    config.showSpecialPoints,
+    config.xMin,
+    config.xMax,
+    config.yMin,
+    config.yMax,
+    compiledCurves,
+  ]);
 
   // Intégrale définie sur la première courbe visible avec fonction valide
   const integralInfo = useMemo(() => {
@@ -393,6 +499,48 @@ export function FunctionPlotBlockView({
     });
   };
 
+  const addParameter = (name = 'a') => {
+    const clean = name.trim();
+    if (!clean) return;
+    const existing = config.parameters ?? [];
+    if (existing.some((p) => p.name === clean)) return;
+    commitConfig({
+      ...config,
+      parameters: [
+        ...existing,
+        { name: clean, value: 1, min: -5, max: 5, step: 0.1 },
+      ],
+    });
+  };
+
+  const updateParameter = (name: string, patch: Partial<PlotParameter>) => {
+    commitConfig({
+      ...config,
+      parameters: (config.parameters ?? []).map((p) =>
+        p.name === name ? { ...p, ...patch } : p
+      ),
+    });
+  };
+
+  const removeParameter = (name: string) => {
+    commitConfig({
+      ...config,
+      parameters: (config.parameters ?? []).filter((p) => p.name !== name),
+    });
+  };
+
+  const toggleTangent = () => {
+    const currentlyEnabled = Boolean(config.tangent?.enabled);
+    commitConfig({
+      ...config,
+      tangent: {
+        enabled: !currentlyEnabled,
+        x0: config.tangent?.x0 ?? 0,
+        curveId: config.tangent?.curveId,
+      },
+    });
+  };
+
   const axisXZeroPx = toSvgX(0);
   const axisYZeroPx = toSvgY(0);
 
@@ -471,6 +619,41 @@ export function FunctionPlotBlockView({
             }`}
           >
             <Grid className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={toggleTangent}
+            title="Afficher la tangente en un point x₀"
+            aria-label="Basculer la tangente"
+            aria-pressed={Boolean(config.tangent?.enabled)}
+            className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors ${
+              config.tangent?.enabled
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'
+                : 'text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+            }`}
+          >
+            <Crosshair className="h-3 w-3" />
+            <span className="hidden sm:inline">Tangente</span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              commitConfig({
+                ...config,
+                showSpecialPoints: !config.showSpecialPoints,
+              })
+            }
+            title="Détecter racines, extrema et intersections"
+            aria-label="Points remarquables"
+            aria-pressed={Boolean(config.showSpecialPoints)}
+            className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors ${
+              config.showSpecialPoints
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                : 'text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+            }`}
+          >
+            <Sparkles className="h-3 w-3" />
+            <span className="hidden sm:inline">Points</span>
           </button>
           <button
             type="button"
@@ -660,6 +843,63 @@ export function FunctionPlotBlockView({
             );
           })}
 
+          {/* Tangente au point x0 */}
+          {tangentInfo && (
+            <g className="pointer-events-none">
+              <line
+                x1={tangentInfo.x1Px}
+                y1={tangentInfo.y1Px}
+                x2={tangentInfo.x2Px}
+                y2={tangentInfo.y2Px}
+                stroke="#f59e0b"
+                strokeWidth={1.8}
+                strokeDasharray="6 4"
+              />
+              {tangentInfo.ptY >= -20 && tangentInfo.ptY <= SVG_HEIGHT + 20 && (
+                <circle
+                  cx={tangentInfo.ptX}
+                  cy={tangentInfo.ptY}
+                  r={5}
+                  fill="#f59e0b"
+                  stroke="#ffffff"
+                  strokeWidth={2}
+                />
+              )}
+            </g>
+          )}
+
+          {/* Points remarquables (zéros, extrema, intersections) */}
+          {specialPoints.map((pt, idx) => {
+            const cx = toSvgX(pt.x);
+            const cy = toSvgY(pt.y);
+            if (cx < -10 || cx > SVG_WIDTH + 10 || cy < -10 || cy > SVG_HEIGHT + 10) {
+              return null;
+            }
+            const markerFill =
+              pt.kind === 'intersection'
+                ? '#f43f5e'
+                : pt.kind === 'extremum'
+                  ? '#10b981'
+                  : pt.color;
+            return (
+              <g
+                key={`sp-${idx}`}
+                onMouseEnter={() => setHoveredSpecialLabel(pt.label)}
+                onMouseLeave={() => setHoveredSpecialLabel(null)}
+                className="cursor-pointer"
+              >
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={4.5}
+                  fill={markerFill}
+                  stroke="#ffffff"
+                  strokeWidth={1.5}
+                />
+              </g>
+            );
+          })}
+
           {/* Réticule interactif */}
           {hoverX !== null && (
             <g className="pointer-events-none print:hidden">
@@ -695,18 +935,24 @@ export function FunctionPlotBlockView({
         </svg>
 
         {/* Infobulle coordonnées au survol */}
-        {hoverX !== null && (
+        {(hoverX !== null || hoveredSpecialLabel) && (
           <div className="pointer-events-none absolute left-3 top-2 flex flex-wrap items-center gap-2 rounded-md border border-stone-200/80 bg-white/90 px-2 py-1 font-mono text-[11px] text-stone-700 shadow-xs backdrop-blur-xs print:hidden dark:border-zinc-700/80 dark:bg-zinc-900/90 dark:text-zinc-200">
-            <span>x = {hoverX.toFixed(3)}</span>
-            {compiledCurves.map((item) => {
-              if (!item.curve.visible || !item.evaluateAt) return null;
-              const y = item.evaluateAt(hoverX);
-              return (
-                <span key={item.curve.id} style={{ color: item.curve.color }}>
-                  y = {Number.isFinite(y) ? y.toFixed(3) : 'Indéf.'}
-                </span>
-              );
-            })}
+            {hoveredSpecialLabel && (
+              <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                {hoveredSpecialLabel}
+              </span>
+            )}
+            {hoverX !== null && <span>x = {hoverX.toFixed(3)}</span>}
+            {hoverX !== null &&
+              compiledCurves.map((item) => {
+                if (!item.curve.visible || !item.evaluateAt) return null;
+                const y = item.evaluateAt(hoverX);
+                return (
+                  <span key={item.curve.id} style={{ color: item.curve.color }}>
+                    y = {Number.isFinite(y) ? y.toFixed(3) : 'Indéf.'}
+                  </span>
+                );
+              })}
           </div>
         )}
 
@@ -734,6 +980,138 @@ export function FunctionPlotBlockView({
             Glisser pour déplacer • Ctrl+Molette pour zoomer
           </span>
         </div>
+
+        {/* Bandeau interactif : curseurs de paramètres, tangente en x₀ et points remarquables */}
+        {((config.parameters?.length ?? 0) > 0 ||
+          tangentInfo ||
+          config.tangent?.enabled ||
+          specialPoints.length > 0) && (
+          <div
+            contentEditable={false}
+            className="space-y-2 border-t border-stone-100 bg-stone-50/40 px-3.5 py-2 text-[11px] dark:border-zinc-800/70 dark:bg-zinc-900/30"
+          >
+            {(config.parameters ?? []).length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+                {(config.parameters ?? []).map((param) => (
+                  <div
+                    key={param.name}
+                    className="flex min-w-[180px] flex-1 items-center gap-2"
+                  >
+                    <span className="w-16 shrink-0 font-mono font-semibold text-indigo-700 dark:text-indigo-300">
+                      {param.name} = {Number(param.value.toFixed(2))}
+                    </span>
+                    <input
+                      type="range"
+                      min={param.min}
+                      max={param.max}
+                      step={param.step}
+                      value={param.value}
+                      onChange={(e) =>
+                        updateParameter(param.name, {
+                          value: Number.parseFloat(e.target.value),
+                        })
+                      }
+                      className="h-1.5 flex-1 cursor-pointer accent-indigo-600 print:hidden dark:accent-indigo-400"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {config.tangent?.enabled && (
+              <div className="flex flex-wrap items-center gap-3 font-mono">
+                <span className="font-semibold text-amber-700 dark:text-amber-300">
+                  Tangente :
+                </span>
+                <label className="inline-flex items-center gap-1.5 print:hidden">
+                  <span>x₀ =</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={config.tangent.x0}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(v)) {
+                        commitConfig({
+                          ...config,
+                          tangent: { ...config.tangent!, x0: v },
+                        });
+                      }
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="w-16 rounded border border-stone-200 bg-white px-1.5 py-0.5 text-stone-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                <input
+                  type="range"
+                  min={config.xMin}
+                  max={config.xMax}
+                  step={Math.max(0.05, Number(((config.xMax - config.xMin) / 100).toFixed(2)))}
+                  value={Math.max(config.xMin, Math.min(config.xMax, config.tangent.x0))}
+                  onChange={(e) =>
+                    commitConfig({
+                      ...config,
+                      tangent: {
+                        ...config.tangent!,
+                        x0: Number.parseFloat(e.target.value),
+                      },
+                    })
+                  }
+                  className="h-1.5 w-32 cursor-pointer accent-amber-500 print:hidden"
+                />
+                {compiledCurves.filter((c) => c.curve.visible).length > 1 && (
+                  <select
+                    value={tangentInfo?.curveId ?? ''}
+                    onChange={(e) =>
+                      commitConfig({
+                        ...config,
+                        tangent: {
+                          ...config.tangent!,
+                          curveId: e.target.value,
+                        },
+                      })
+                    }
+                    aria-label="Courbe pour la tangente"
+                    className="rounded border border-stone-200 bg-white px-1.5 py-0.5 text-[11px] print:hidden dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    {compiledCurves
+                      .filter((c) => c.curve.visible)
+                      .map((c, idx) => (
+                        <option key={c.curve.id} value={c.curve.id}>
+                          f{idx + 1}(x)
+                        </option>
+                      ))}
+                  </select>
+                )}
+                {tangentInfo ? (
+                  <span className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300">
+                    {tangentInfo.equation} (pente {tangentInfo.slope.toFixed(2)})
+                  </span>
+                ) : (
+                  <span className="text-stone-400">Indéfini en x₀</span>
+                )}
+              </div>
+            )}
+
+            {specialPoints.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium text-stone-500 dark:text-zinc-400">
+                  Points :
+                </span>
+                {specialPoints.slice(0, 10).map((pt, idx) => (
+                  <span
+                    key={`chip-${idx}`}
+                    onMouseEnter={() => setHoveredSpecialLabel(pt.label)}
+                    onMouseLeave={() => setHoveredSpecialLabel(null)}
+                    className="cursor-default rounded border border-stone-200/80 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  >
+                    {pt.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Panneau de configuration courbes / domaine / intégrale */}
@@ -820,14 +1198,43 @@ export function FunctionPlotBlockView({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-            <button
-              type="button"
-              onClick={addCurve}
-              className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Ajouter une courbe</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={addCurve}
+                className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Ajouter une courbe</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const candidate =
+                    missingCandidateParams[0] ??
+                    String.fromCharCode(
+                      97 + ((config.parameters?.length ?? 0) % 26)
+                    );
+                  addParameter(candidate);
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Paramètre</span>
+              </button>
+
+              {missingCandidateParams.map((sym) => (
+                <button
+                  key={sym}
+                  type="button"
+                  onClick={() => addParameter(sym)}
+                  className="rounded-md border border-indigo-300 bg-indigo-50 px-2 py-1 font-mono text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                >
+                  + Curseur {sym}
+                </button>
+              ))}
+            </div>
 
             <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-stone-500 dark:text-zinc-400">
               <label className="flex items-center gap-1">
@@ -888,6 +1295,81 @@ export function FunctionPlotBlockView({
               </label>
             </div>
           </div>
+
+          {(config.parameters ?? []).length > 0 && (
+            <div className="space-y-1.5 border-t border-stone-200/70 pt-2 dark:border-zinc-800">
+              <div className="font-medium text-stone-500 dark:text-zinc-400">
+                Curseurs de paramètres :
+              </div>
+              {(config.parameters ?? []).map((param) => (
+                <div
+                  key={`cfg-${param.name}`}
+                  className="flex flex-wrap items-center gap-2 font-mono text-[11px]"
+                >
+                  <input
+                    type="text"
+                    value={param.name}
+                    onChange={(e) =>
+                      updateParameter(param.name, { name: e.target.value })
+                    }
+                    onKeyDown={(e) => e.stopPropagation()}
+                    aria-label="Nom du paramètre"
+                    className="w-12 rounded border border-stone-200 bg-white px-1.5 py-0.5 text-center font-semibold text-indigo-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-indigo-300"
+                  />
+                  <span>min</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={param.min}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(v) && v < param.max) {
+                        updateParameter(param.name, { min: v });
+                      }
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="w-14 rounded border border-stone-200 bg-white px-1.5 py-0.5 dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                  <span>max</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={param.max}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(v) && v > param.min) {
+                        updateParameter(param.name, { max: v });
+                      }
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="w-14 rounded border border-stone-200 bg-white px-1.5 py-0.5 dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                  <span>pas</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={param.step}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(v) && v > 0) {
+                        updateParameter(param.name, { step: v });
+                      }
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    className="w-14 rounded border border-stone-200 bg-white px-1.5 py-0.5 dark:border-zinc-700 dark:bg-zinc-950"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeParameter(param.name)}
+                    title="Supprimer ce paramètre"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-stone-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950/60 dark:hover:text-red-400"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </NodeViewWrapper>

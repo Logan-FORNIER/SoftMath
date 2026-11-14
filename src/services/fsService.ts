@@ -1,5 +1,6 @@
 import { basename, dirname, join } from '@tauri-apps/api/path';
-import { confirm, open } from '@tauri-apps/plugin-dialog';
+import { confirm, open, save } from '@tauri-apps/plugin-dialog';
+import { isTauriEnvironment } from './aiService';
 import {
   exists,
   mkdir,
@@ -494,4 +495,43 @@ export async function createEmptyDrawingAsset(
     JSON.stringify(emptyScene, null, 2)
   );
   return fileName;
+}
+
+export async function exportLatexDocumentFile(
+  suggestedBaseName: string,
+  texContent: string
+): Promise<string | null> {
+  const safeBase =
+    suggestedBaseName
+      .trim()
+      .replace(INVALID_FILENAME_CHARS, '_')
+      .replace(/\.tex$/i, '') || 'note';
+  const defaultFileName = `${safeBase}.tex`;
+
+  if (isTauriEnvironment()) {
+    const destination = await save({
+      title: 'Exporter en LaTeX (.tex)',
+      defaultPath: defaultFileName,
+      filters: [{ name: 'Document LaTeX', extensions: ['tex'] }],
+    });
+
+    if (!destination) {
+      return null;
+    }
+
+    await writeTextFile(destination, texContent);
+    return destination;
+  }
+
+  // Fallback for standalone browser dev testing without Tauri
+  const blob = new Blob([texContent], { type: 'application/x-tex;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = defaultFileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  return defaultFileName;
 }

@@ -11,6 +11,7 @@ import { generateMathStructureLatex } from '../utils/mathTemplates';
 import { insertAcademicBlockNode } from './AcademicBlock';
 import { insertNewDrawingBlock } from './SoftExcalidraw';
 import { insertFunctionPlotBlock } from './SoftFunctionPlot';
+import { insertVariationTableBlock } from './SoftVariationTable';
 
 function normalizeSearchText(value: string): string {
   return value
@@ -186,6 +187,21 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
         typedEditor.chain().focus().deleteRange(range).run();
       }
       insertFunctionPlotBlock(typedEditor);
+    },
+  },
+  {
+    id: 'variationTable',
+    title: 'Tableau de variations / signes',
+    description: 'Tableau interactif avec signes, flèches et doubles barres ||',
+    keywords: ['tableau', 'variation', 'variations', 'signe', 'signes', 'borne'],
+    badge: '/tableau',
+    icon: 'variation',
+    run: ({ editor, range }) => {
+      const typedEditor = editor as Editor;
+      if (range) {
+        typedEditor.chain().focus().deleteRange(range).run();
+      }
+      insertVariationTableBlock(typedEditor);
     },
   },
   {

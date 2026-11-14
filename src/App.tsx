@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, FileDown, Minimize2, X } from 'lucide-react';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { EditorArea, type EditorAreaHandle } from './components/EditorArea';
+import { FlashcardReviewModal } from './components/FlashcardReviewModal';
 import { QuickSearchModal } from './components/QuickSearchModal';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -12,6 +13,9 @@ import { useAiWorkspace } from './hooks/useAiWorkspace';
 import { useAppUpdater } from './hooks/useAppUpdater';
 import { useTheme } from './hooks/useTheme';
 import { useTabWorkspace } from './hooks/useTabWorkspace';
+import { exportLatexDocumentFile, formatFsError } from './services/fsService';
+import { exportNoteToLatex } from './services/latexExportService';
+import { flattenWorkspaceNotes } from './services/searchService';
 
 const OUTLINE_STORAGE_KEY = 'softmath:outlineOpen';
 
@@ -46,13 +50,32 @@ export function App() {
     closeTab,
     closeOtherTabs,
     cycleTab,
+    isSplitView,
+    secondaryNote,
+    secondarySaveStatus,
+    focusedPane,
+    setFocusedPane,
+    openSecondaryNoteByPath,
+    closeSplitView,
+    toggleSplitView,
+    swapSplitPanes,
+    updateSecondaryNoteContent,
   } = useTabWorkspace();
 
   const editorAreaRef = useRef<EditorAreaHandle>(null);
 
+  const focusedNote =
+    isSplitView && focusedPane === 'secondary' && secondaryNote
+      ? secondaryNote
+      : activeNote;
+  const effectiveSaveStatus =
+    isSplitView && focusedPane === 'secondary' && secondaryNote
+      ? secondarySaveStatus
+      : saveStatus;
+
   const ai = useAiWorkspace({
-    activeNoteTitle: activeNote?.displayName ?? null,
-    activeNoteMarkdown: activeNote?.content ?? null,
+    activeNoteTitle: focusedNote?.displayName ?? null,
+    activeNoteMarkdown: focusedNote?.content ?? null,
   });
 
   const updater = useAppUpdater({
@@ -85,8 +108,40 @@ export function App() {
     }
   });
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isFlashcardsOpen, setIsFlashcardsOpen] = useState(false);
   const [isPreparingPrint, setIsPreparingPrint] = useState(false);
   const [focusTitleSignal, setFocusTitleSignal] = useState(0);
+  const [latexFeedback, setLatexFeedback] = useState<string | null>(null);
+  const latexFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (latexFeedbackTimerRef.current !== null) {
+        clearTimeout(latexFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showLatexFeedback = useCallback((label: string) => {
+    setLatexFeedback(label);
+    if (latexFeedbackTimerRef.current !== null) {
+      clearTimeout(latexFeedbackTimerRef.current);
+    }
+    latexFeedbackTimerRef.current = setTimeout(() => {
+      latexFeedbackTimerRef.current = null;
+      setLatexFeedback(null);
+    }, 2500);
+  }, []);
+
+  const workspaceNotes = useMemo(() => {
+    if (!rootPath) return [];
+    return flattenWorkspaceNotes(tree, rootPath).map((entry) => ({
+      path: entry.path,
+      label: entry.relativeFolder
+        ? `${entry.relativeFolder} / ${entry.displayName}`
+        : entry.displayName,
+    }));
+  }, [tree, rootPath]);
 
   const toggleOutline = useCallback(() => {
     setIsOutlineOpen((prev) => {
@@ -101,7 +156,8 @@ export function App() {
   }, []);
 
   const handleExportPdf = useCallback(async () => {
-    if (!activeNote) {
+    const targetNote = focusedNote;
+    if (!targetNote) {
       return;
     }
 
@@ -114,7 +170,7 @@ export function App() {
     const prevTitle = document.title;
     const wasDark = theme === 'dark';
 
-    document.title = activeNote.displayName || 'SoftMath';
+    document.title = targetNote.displayName || 'SoftMath';
 
     if (wasDark) {
       setIsPreparingPrint(true);
@@ -151,7 +207,44 @@ export function App() {
     window.print();
     window.addEventListener('focus', restoreAfterPrint, { once: true });
     window.setTimeout(restoreAfterPrint, 1200);
-  }, [activeNote, theme, flushPendingSave]);
+  }, [focusedNote, theme, flushPendingSave]);
+
+  const handleExportLatex = useCallback(async () => {
+    if (!focusedNote) {
+      return;
+    }
+    await flushPendingSave();
+    const tex = exportNoteToLatex({
+      title: focusedNote.displayName,
+      content: focusedNote.content,
+    });
+    try {
+      const savedPath = await exportLatexDocumentFile(focusedNote.displayName, tex);
+      if (savedPath) {
+        showLatexFeedback('Export .tex OK');
+      }
+    } catch (err) {
+      reportError(
+        formatFsError(err, "Impossible d'exporter le document en LaTeX (.tex).")
+      );
+    }
+  }, [focusedNote, flushPendingSave, reportError, showLatexFeedback]);
+
+  const handleCopyLatex = useCallback(async () => {
+    if (!focusedNote) {
+      return;
+    }
+    const tex = exportNoteToLatex({
+      title: focusedNote.displayName,
+      content: focusedNote.content,
+    });
+    try {
+      await navigator.clipboard.writeText(tex);
+      showLatexFeedback('LaTeX copié');
+    } catch {
+      reportError('Impossible de copier le code LaTeX dans le presse-papiers.');
+    }
+  }, [focusedNote, reportError, showLatexFeedback]);
 
   const handleCreateNote = useCallback(
     async (parentDir?: string) => {
@@ -194,6 +287,9 @@ export function App() {
       if ((key === 'p' || key === 'k') && !e.shiftKey && rootPath) {
         e.preventDefault();
         setIsSearchOpen((prev) => !prev);
+      } else if (key === 'r' && e.shiftKey && rootPath) {
+        e.preventDefault();
+        setIsFlashcardsOpen((prev) => !prev);
       } else if (
         ((key === 'b' && e.shiftKey) || (e.key === '\\' && !e.shiftKey)) &&
         rootPath
@@ -209,7 +305,7 @@ export function App() {
       } else if (e.key === 'Tab' && rootPath && openTabs.length > 1) {
         e.preventDefault();
         void cycleTab(e.shiftKey ? -1 : 1);
-      } else if (key === 's' && !e.shiftKey && activeNote) {
+      } else if (key === 's' && !e.shiftKey && (activeNote || secondaryNote)) {
         e.preventDefault();
         void flushPendingSave();
       }
@@ -220,6 +316,7 @@ export function App() {
   }, [
     rootPath,
     activeNote,
+    secondaryNote,
     activeTabPath,
     openTabs.length,
     handleCreateNote,
@@ -292,6 +389,11 @@ export function App() {
                 onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
                 isOutlineOpen={isOutlineOpen}
                 onToggleOutline={toggleOutline}
+                isSplitView={isSplitView}
+                onToggleSplitView={() => {
+                  void toggleSplitView();
+                }}
+                onOpenFlashcards={() => setIsFlashcardsOpen(true)}
                 isCopilotOpen={ai.copilotOpen}
                 onToggleCopilot={() => ai.setCopilotOpen((prev) => !prev)}
                 onOpenAiSettings={() => ai.setSettingsOpen(true)}
@@ -301,10 +403,17 @@ export function App() {
               onExportPdf={() => {
                 void handleExportPdf();
               }}
+              onExportLatex={() => {
+                void handleExportLatex();
+              }}
+              onCopyLatex={() => {
+                void handleCopyLatex();
+              }}
+              latexFeedback={latexFeedback}
               rootPath={rootPath}
               rootName={rootName}
-              activeNote={activeNote}
-              saveStatus={saveStatus}
+              activeNote={focusedNote}
+              saveStatus={effectiveSaveStatus}
               theme={theme}
               onToggleTheme={toggleTheme}
             />
@@ -312,10 +421,14 @@ export function App() {
             <TabBar
               tabs={openTabs}
               activeTabPath={activeTabPath}
+              secondaryTabPath={isSplitView ? (secondaryNote?.path ?? null) : null}
               dirtyPaths={dirtyTabPaths}
               rootPath={rootPath}
               onSelectTab={(path) => {
                 void switchTab(path);
+              }}
+              onOpenSplitTab={(path) => {
+                void openSecondaryNoteByPath(path);
               }}
               onCloseTab={(path) => {
                 void closeTab(path);
@@ -332,7 +445,7 @@ export function App() {
 
         {isZenMode && (
           <div className="fixed right-4 top-3 z-30 flex items-center gap-1.5 rounded-full border border-stone-200/80 bg-white/85 px-2.5 py-1 text-xs text-stone-600 opacity-50 shadow-sm backdrop-blur-md transition-opacity hover:opacity-100 print:hidden dark:border-zinc-700/80 dark:bg-zinc-900/85 dark:text-zinc-300">
-            {activeNote && (
+            {focusedNote && (
               <button
                 type="button"
                 onClick={() => {
@@ -375,6 +488,27 @@ export function App() {
             void handleCreateNote();
           }}
           onNotifyError={reportError}
+          isSplitView={isSplitView}
+          secondaryNote={secondaryNote}
+          focusedPane={focusedPane}
+          onFocusPane={setFocusedPane}
+          onChangeSecondaryContent={updateSecondaryNoteContent}
+          onRenameSecondaryNote={(newName) => {
+            if (!secondaryNote) {
+              return Promise.resolve(false);
+            }
+            return renameNode({ path: secondaryNote.path, kind: 'note' }, newName);
+          }}
+          workspaceNotes={workspaceNotes}
+          onSelectSecondaryPath={(path) => {
+            void openSecondaryNoteByPath(path);
+          }}
+          onSwapSplitPanes={() => {
+            void swapSplitPanes();
+          }}
+          onCloseSplitView={() => {
+            void closeSplitView();
+          }}
           copilotOpen={ai.copilotOpen && !isZenMode}
           onCloseCopilot={() => ai.setCopilotOpen(false)}
           onOpenAiSettings={() => ai.setSettingsOpen(true)}
@@ -404,7 +538,7 @@ export function App() {
           activeRoute={ai.activeRoute}
           isStreaming={ai.isCopilotStreaming || ai.inlineTask?.status === 'streaming'}
           copilotOpen={ai.copilotOpen}
-          hasActiveNote={Boolean(activeNote)}
+          hasActiveNote={Boolean(focusedNote)}
           onSelectProfile={ai.setProfileMode}
           onRefreshOllama={() => {
             void ai.refreshOllamaHealth();
@@ -440,6 +574,19 @@ export function App() {
         activeNote={activeNote}
         onClose={() => setIsSearchOpen(false)}
         onSelectNote={selectNote}
+      />
+
+      <FlashcardReviewModal
+        isOpen={isFlashcardsOpen}
+        onClose={() => setIsFlashcardsOpen(false)}
+        rootPath={rootPath}
+        tree={tree}
+        openTabs={openTabs}
+        activeNote={focusedNote}
+        secondaryNote={secondaryNote}
+        onOpenSourceNote={(notePath) => {
+          void switchTab(notePath);
+        }}
       />
 
       {errorMessage && (

@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import katex from 'katex';
+import { VariationTableCanvas } from '../editor/components/VariationTableCanvas';
+import { parseVariationTableConfig } from '../editor/extensions/SoftVariationTable';
 
 interface MathMarkdownPreviewProps {
   content: string;
@@ -414,6 +416,22 @@ export const MathMarkdownPreview: React.FC<MathMarkdownPreviewProps> = React.mem
             }
 
             case 'codeBlock':
+              if (block.lang === 'softmath-variation') {
+                const parsedTable = parseVariationTableConfig(block.code);
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-lg border border-stone-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {parsedTable.title && (
+                      <div className="mb-1.5 text-[11px] font-semibold text-stone-700 dark:text-zinc-200">
+                        {parsedTable.title}
+                      </div>
+                    )}
+                    <VariationTableCanvas config={parsedTable} />
+                  </div>
+                );
+              }
               return (
                 <pre
                   key={key}

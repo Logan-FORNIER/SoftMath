@@ -50,48 +50,58 @@ export function useWorkspace() {
     }
   }, []);
 
-  const persistWrite = useCallback((path: string, content: string): Promise<void> => {
-    const run = async () => {
-      if (activeNoteRef.current?.path === path) {
-        setSaveStatus('saving');
-      }
+  const enqueueWrite = useCallback(
+    (task: () => Promise<void>): Promise<void> => {
+      const next = writeQueueRef.current.then(task, task);
+      writeQueueRef.current = next;
+      return next;
+    },
+    []
+  );
 
-      try {
-        await writeNoteContent(path, content);
-
+  const persistWrite = useCallback(
+    (path: string, content: string): Promise<void> => {
+      const run = async () => {
         if (activeNoteRef.current?.path === path) {
-          setActiveNote((current) =>
-            current && current.path === path
-              ? { ...current, lastSavedContent: content }
-              : current
+          setSaveStatus('saving');
+        }
+
+        try {
+          await writeNoteContent(path, content);
+
+          if (activeNoteRef.current?.path === path) {
+            setActiveNote((current) =>
+              current && current.path === path
+                ? { ...current, lastSavedContent: content }
+                : current
+            );
+            const hasNewerEdits =
+              activeNoteRef.current.content !== content ||
+              pendingSaveRef.current?.path === path;
+            setSaveStatus(hasNewerEdits ? 'dirty' : 'saved');
+          }
+        } catch (err) {
+          if (activeNoteRef.current?.path === path) {
+            setSaveStatus('error');
+          }
+          setErrorMessage(
+            formatFsError(err, 'Erreur lors de la sauvegarde automatique de la note.')
           );
-          const hasNewerEdits =
-            activeNoteRef.current.content !== content ||
-            pendingSaveRef.current?.path === path;
-          setSaveStatus(hasNewerEdits ? 'dirty' : 'saved');
-        }
-      } catch (err) {
-        if (activeNoteRef.current?.path === path) {
-          setSaveStatus('error');
-        }
-        setErrorMessage(
-          formatFsError(err, 'Erreur lors de la sauvegarde automatique de la note.')
-        );
-        if (rootPathRef.current && (await pathExists(rootPathRef.current))) {
-          try {
-            const refreshed = await readWorkspaceTree(rootPathRef.current);
-            setTree(refreshed);
-          } catch {
-            // Keep existing error banner focused on save failure.
+          if (rootPathRef.current && (await pathExists(rootPathRef.current))) {
+            try {
+              const refreshed = await readWorkspaceTree(rootPathRef.current);
+              setTree(refreshed);
+            } catch {
+              // Keep existing error banner focused on save failure.
+            }
           }
         }
-      }
-    };
+      };
 
-    const next = writeQueueRef.current.then(run, run);
-    writeQueueRef.current = next;
-    return next;
-  }, []);
+      return enqueueWrite(run);
+    },
+    [enqueueWrite]
+  );
 
   const flushPendingSave = useCallback(async () => {
     clearPendingTimer();
@@ -590,6 +600,7 @@ export function useWorkspace() {
     selectNote,
     updateNoteContent,
     flushPendingSave,
+    enqueueWrite,
     clearActiveNote,
     createNewNote,
     createNewFolder,

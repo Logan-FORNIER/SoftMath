@@ -1,8 +1,14 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Bot,
   Check,
+  ChevronDown,
+  Columns2,
+  Copy,
+  FileCode2,
   FileDown,
+  Layers,
   ListTree,
   Loader2,
   Maximize2,
@@ -21,6 +27,9 @@ interface TopBarProps {
   onToggleSidebar: () => void;
   isOutlineOpen: boolean;
   onToggleOutline: () => void;
+  isSplitView?: boolean;
+  onToggleSplitView?: () => void;
+  onOpenFlashcards?: () => void;
   isCopilotOpen?: boolean;
   onToggleCopilot?: () => void;
   onOpenAiSettings?: () => void;
@@ -28,6 +37,9 @@ interface TopBarProps {
   onToggleZenMode?: () => void;
   onOpenSearch: () => void;
   onExportPdf: () => void;
+  onExportLatex?: () => void;
+  onCopyLatex?: () => void;
+  latexFeedback?: string | null;
   rootPath: string;
   rootName: string;
   activeNote: OpenNote | null;
@@ -81,6 +93,9 @@ export function TopBar({
   onToggleSidebar,
   isOutlineOpen,
   onToggleOutline,
+  isSplitView = false,
+  onToggleSplitView,
+  onOpenFlashcards,
   isCopilotOpen = false,
   onToggleCopilot,
   onOpenAiSettings,
@@ -88,6 +103,9 @@ export function TopBar({
   onToggleZenMode,
   onOpenSearch,
   onExportPdf,
+  onExportLatex,
+  onCopyLatex,
+  latexFeedback = null,
   rootPath,
   rootName,
   activeNote,
@@ -95,6 +113,34 @@ export function TopBar({
   theme,
   onToggleTheme,
 }: TopBarProps) {
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isExportMenuOpen) {
+      return;
+    }
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsExportMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleOutsideClick);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [isExportMenuOpen]);
+
   const segments = activeNote
     ? getRelativeSegments(rootPath, activeNote.path).map((seg, idx, arr) =>
         idx === arr.length - 1 ? stripMdExtension(seg) : seg
@@ -172,8 +218,44 @@ export function TopBar({
           </kbd>
         </button>
 
+        {onOpenFlashcards && (
+          <button
+            type="button"
+            data-testid="topbar-open-flashcards"
+            onClick={onOpenFlashcards}
+            title="Mode Révision — Flashcards (Ctrl+Maj+R)"
+            aria-label="Ouvrir le mode Révision"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-stone-600 transition-colors hover:bg-indigo-50 hover:text-indigo-700 dark:text-zinc-300 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-300"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span className="hidden lg:inline">Réviser</span>
+          </button>
+        )}
+
         {activeNote && (
           <>
+            {onToggleSplitView && (
+              <button
+                type="button"
+                data-testid="topbar-toggle-split"
+                onClick={onToggleSplitView}
+                aria-pressed={isSplitView}
+                title={
+                  isSplitView
+                    ? 'Fermer la vue scindée'
+                    : 'Vue scindée (2 notes côte à côte)'
+                }
+                aria-label="Basculer la vue scindée"
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                  isSplitView
+                    ? 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-400/15 dark:text-indigo-400'
+                    : 'text-stone-500 hover:bg-stone-200/70 hover:text-stone-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+                }`}
+              >
+                <Columns2 className="h-4 w-4" />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onToggleOutline}
@@ -228,15 +310,75 @@ export function TopBar({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={onExportPdf}
-              title="Exporter la note en PDF"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-stone-200/90 bg-white px-2.5 text-xs font-medium text-stone-700 shadow-2xs transition-colors hover:bg-stone-50 hover:text-stone-950 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Exporter en PDF</span>
-            </button>
+            <div ref={exportMenuRef} className="relative">
+              <button
+                type="button"
+                data-testid="topbar-export-menu"
+                onClick={() => setIsExportMenuOpen((prev) => !prev)}
+                aria-expanded={isExportMenuOpen}
+                aria-haspopup="menu"
+                title="Exporter la note (PDF ou LaTeX .tex)"
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-stone-200/90 bg-white px-2.5 text-xs font-medium text-stone-700 shadow-2xs transition-colors hover:bg-stone-50 hover:text-stone-950 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">
+                  {latexFeedback ? latexFeedback : 'Exporter'}
+                </span>
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+
+              {isExportMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-40 mt-1.5 w-52 overflow-hidden rounded-lg border border-stone-200 bg-white py-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsExportMenuOpen(false);
+                      onExportPdf();
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 transition-colors hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    <FileDown className="h-3.5 w-3.5 text-stone-400" />
+                    <span>Exporter en PDF…</span>
+                  </button>
+
+                  {onExportLatex && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="export-latex-file"
+                      onClick={() => {
+                        setIsExportMenuOpen(false);
+                        onExportLatex();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 transition-colors hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <FileCode2 className="h-3.5 w-3.5 text-indigo-500" />
+                      <span>Exporter en LaTeX (.tex)…</span>
+                    </button>
+                  )}
+
+                  {onCopyLatex && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-testid="copy-latex-code"
+                      onClick={() => {
+                        setIsExportMenuOpen(false);
+                        onCopyLatex();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 transition-colors hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <Copy className="h-3.5 w-3.5 text-stone-400" />
+                      <span>Copier le code LaTeX</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
 
             {onToggleZenMode && (
               <button

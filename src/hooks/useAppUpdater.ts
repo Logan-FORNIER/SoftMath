@@ -71,7 +71,7 @@ export function useAppUpdater({
   onNotifyError,
 }: UseAppUpdaterOptions = {}) {
   const [status, setStatus] = useState<AppUpdateStatus>('idle');
-  const [currentVersion, setCurrentVersion] = useState<string>('0.1.0');
+  const [currentVersion, setCurrentVersion] = useState<string>('0.2.0');
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
