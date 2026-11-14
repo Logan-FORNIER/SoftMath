@@ -519,4 +519,3 @@ export const SlashCommand = Extension.create<{
     ];
   },
 });
-
