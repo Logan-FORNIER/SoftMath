@@ -1,5 +1,6 @@
 import { computePosition, flip, offset, shift } from '@floating-ui/dom';
 import { Node, mergeAttributes } from '@tiptap/core';
+import { PluginKey } from '@tiptap/pm/state';
 import { ReactNodeViewRenderer, ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionOptions } from '@tiptap/suggestion';
 import { normalizeWikiKey } from '../../services/backlinkService';
@@ -9,6 +10,8 @@ import {
   type WikiLinkSuggestionItem,
 } from '../components/WikiLinkList';
 import { WikiLinkView } from '../components/WikiLinkView';
+
+const WIKI_LINK_SUGGESTION_KEY = new PluginKey('wikiLinkSuggestion');
 
 let workspaceWikiNotesProvider: () => WikiLinkSuggestionItem[] = () => [];
 
@@ -115,8 +118,16 @@ export const SoftWikiLink = Node.create({
       SuggestionOptions<WikiLinkSuggestionItem>,
       'editor'
     > = {
+      pluginKey: WIKI_LINK_SUGGESTION_KEY,
       char: '[[',
       allowSpaces: true,
+      allowedPrefixes: [' ', '(', ':'],
+      allow: ({ state, range }) => {
+        const $from = state.doc.resolve(range.from);
+        if ($from.parent.type.spec.code) return false;
+        const slice = state.doc.textBetween(range.from, range.to, '');
+        return !slice.includes(']]');
+      },
       items: ({ query }) => {
         const all = workspaceWikiNotesProvider();
         const q = normalizeWikiKey(query);

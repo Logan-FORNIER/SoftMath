@@ -1,5 +1,6 @@
 import { computePosition, flip, offset, shift } from '@floating-ui/dom';
 import { Extension, type Editor } from '@tiptap/core';
+import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionOptions } from '@tiptap/suggestion';
 import {
@@ -16,6 +17,8 @@ import { insertMatrixBlock } from './SoftMatrixBlock';
 import { insertProbabilityTreeBlock } from './SoftProbabilityTree';
 import { insertSurface3DBlock } from './SoftSurface3D';
 import { insertVariationTableBlock } from './SoftVariationTable';
+
+const SLASH_COMMAND_PLUGIN_KEY = new PluginKey('slashCommandSuggestion');
 
 function normalizeSearchText(value: string): string {
   return value
@@ -509,6 +512,7 @@ export const SlashCommand = Extension.create<{
   addProseMirrorPlugins() {
     return [
       Suggestion({
+        pluginKey: SLASH_COMMAND_PLUGIN_KEY,
         editor: this.editor,
         ...this.options.suggestion,
       }),

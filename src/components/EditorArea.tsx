@@ -1,12 +1,15 @@
 import {
+  Component,
   forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import {
+  AlertTriangle,
   ArrowLeftRight,
   FilePlus,
   Sigma,
@@ -38,6 +41,43 @@ export interface EditorAreaHandle {
   getAiBridge: () => EditorAiBridge | null;
   triggerOcrFilePicker: () => void;
   setFocusedNoteMarkdown: (markdown: string) => void;
+}
+
+class EditorPaneErrorBoundary extends Component<
+  { noteTitle: string; children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-400">
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <p className="text-sm font-semibold text-stone-800 dark:text-zinc-100">
+            Impossible d&apos;afficher la note « {this.props.noteTitle} »
+          </p>
+          <p className="max-w-md rounded bg-stone-100 px-3 py-1.5 font-mono text-xs text-rose-700 dark:bg-zinc-900 dark:text-rose-300">
+            {this.state.error.message}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ error: null })}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+          >
+            Réessayer
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 interface WorkspaceNoteOption {
@@ -511,20 +551,25 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
                 </button>
               </div>
             ) : (
-              <NoteEditorPane
-                ref={primaryPaneRef}
-                note={activeNote}
-                theme={theme}
-                focusTitleSignal={focusTitleSignal}
-                onChangeContent={onChangeContent}
-                onRenameNote={onRenameActiveNote}
-                onHeadingsChange={handlePrimaryHeadingsChange}
-                onActiveHeadingChange={setPrimaryActiveHeadingId}
-                onNotifyError={onNotifyError}
-                onOpenTemplates={onOpenTemplates}
-                onAiInlineAction={onAiInlineAction}
-                onOcrImage={onOcrImage}
-              />
+              <EditorPaneErrorBoundary
+                key={activeNote.sessionId}
+                noteTitle={activeNote.displayName}
+              >
+                <NoteEditorPane
+                  ref={primaryPaneRef}
+                  note={activeNote}
+                  theme={theme}
+                  focusTitleSignal={focusTitleSignal}
+                  onChangeContent={onChangeContent}
+                  onRenameNote={onRenameActiveNote}
+                  onHeadingsChange={handlePrimaryHeadingsChange}
+                  onActiveHeadingChange={setPrimaryActiveHeadingId}
+                  onNotifyError={onNotifyError}
+                  onOpenTemplates={onOpenTemplates}
+                  onAiInlineAction={onAiInlineAction}
+                  onOcrImage={onOcrImage}
+                />
+              </EditorPaneErrorBoundary>
             )}
           </div>
 
@@ -624,23 +669,28 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
                   </div>
                 </main>
               ) : (
-                <NoteEditorPane
-                  ref={secondaryPaneRef}
-                  note={secondaryNote}
-                  theme={theme}
-                  onChangeContent={(md) => onChangeSecondaryContent?.(md)}
-                  onRenameNote={(name) =>
-                    onRenameSecondaryNote
-                      ? onRenameSecondaryNote(name)
-                      : Promise.resolve(false)
-                  }
-                  onHeadingsChange={handleSecondaryHeadingsChange}
-                  onActiveHeadingChange={setSecondaryActiveHeadingId}
-                  onNotifyError={onNotifyError}
-                  onOpenTemplates={onOpenTemplates}
-                  onAiInlineAction={onAiInlineAction}
-                  onOcrImage={onOcrImage}
-                />
+                <EditorPaneErrorBoundary
+                  key={secondaryNote.sessionId}
+                  noteTitle={secondaryNote.displayName}
+                >
+                  <NoteEditorPane
+                    ref={secondaryPaneRef}
+                    note={secondaryNote}
+                    theme={theme}
+                    onChangeContent={(md) => onChangeSecondaryContent?.(md)}
+                    onRenameNote={(name) =>
+                      onRenameSecondaryNote
+                        ? onRenameSecondaryNote(name)
+                        : Promise.resolve(false)
+                    }
+                    onHeadingsChange={handleSecondaryHeadingsChange}
+                    onActiveHeadingChange={setSecondaryActiveHeadingId}
+                    onNotifyError={onNotifyError}
+                    onOpenTemplates={onOpenTemplates}
+                    onAiInlineAction={onAiInlineAction}
+                    onOcrImage={onOcrImage}
+                  />
+                </EditorPaneErrorBoundary>
               )}
             </div>
           )}
