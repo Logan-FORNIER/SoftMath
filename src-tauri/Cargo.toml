@@ -1,6 +1,6 @@
 [package]
 name = "softmath"
-version = "0.2.0"
+version = "0.3.0"
 description = "Application de prise de notes mathématiques minimaliste et rapide"
 authors = ["SoftMath"]
 edition = "2021"

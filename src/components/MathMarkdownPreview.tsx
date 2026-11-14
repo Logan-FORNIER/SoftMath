@@ -1,12 +1,24 @@
 import React, { useMemo } from 'react';
-import katex from 'katex';
+import { Geometry2DCanvas } from '../editor/components/Geometry2DCanvas';
+import { ProbabilityTreeCanvas } from '../editor/components/ProbabilityTreeCanvas';
+import { Surface3DCanvas } from '../editor/components/Surface3DCanvas';
 import { VariationTableCanvas } from '../editor/components/VariationTableCanvas';
+import { parseBlockMathMeta } from '../editor/utils/equationMeta';
+import { parseGeometry2DConfig } from '../editor/extensions/SoftGeometry2D';
+import { parseMatrixBlockConfig } from '../editor/extensions/SoftMatrixBlock';
+import { parseProbabilityTreeConfig } from '../editor/extensions/SoftProbabilityTree';
+import { parseSurface3DConfig } from '../editor/extensions/SoftSurface3D';
 import { parseVariationTableConfig } from '../editor/extensions/SoftVariationTable';
+import { useSoftMathUi } from '../contexts/SoftMathUiContext';
+import { stripExamSolutionsFromMarkdown } from '../services/examModeService';
+import { renderKatexWithMacros } from '../services/katexMacrosService';
+import { matrixBlockConfigToLatex } from '../services/matrixService';
 
 interface MathMarkdownPreviewProps {
   content: string;
   isStreaming?: boolean;
   className?: string;
+  respectExamMode?: boolean;
 }
 
 type BlockNode =
@@ -61,7 +73,7 @@ const ACADEMIC_LABELS: Record<
 
 function renderKatexHtml(latex: string, displayMode: boolean): string {
   try {
-    return katex.renderToString(latex.trim(), {
+    return renderKatexWithMacros(latex.trim(), {
       displayMode,
       throwOnError: false,
       strict: 'ignore',
@@ -261,6 +273,27 @@ function renderInlineSegments(text: string, keyPrefix: string): React.ReactNode[
   let tokenIdx = 0;
 
   while (cursor < text.length) {
+    // Check wiki-link [[target]] or [[target|label]]
+    if (text.startsWith('[[', cursor) && (cursor === 0 || text[cursor - 1] !== '!')) {
+      const end = text.indexOf(']]', cursor + 2);
+      if (end !== -1 && end > cursor + 2) {
+        const inner = text.slice(cursor + 2, end).trim();
+        const pipeIdx = inner.indexOf('|');
+        const target = (pipeIdx !== -1 ? inner.slice(0, pipeIdx) : inner).trim();
+        const label = (pipeIdx !== -1 ? inner.slice(pipeIdx + 1) : target).trim();
+        nodes.push(
+          <span
+            key={`${keyPrefix}-wl-${tokenIdx++}`}
+            className="mx-0.5 inline-flex items-center rounded bg-indigo-500/12 px-1.5 py-0.5 text-[0.88em] font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"
+          >
+            {label}
+          </span>
+        );
+        cursor = end + 2;
+        continue;
+      }
+    }
+
     // Check inline code `...`
     if (text[cursor] === '`') {
       const end = text.indexOf('`', cursor + 1);
@@ -349,7 +382,8 @@ function renderInlineSegments(text: string, keyPrefix: string): React.ReactNode[
       nextSpecial < text.length &&
       text[nextSpecial] !== '`' &&
       text[nextSpecial] !== '$' &&
-      text[nextSpecial] !== '*'
+      text[nextSpecial] !== '*' &&
+      text[nextSpecial] !== '['
     ) {
       nextSpecial += 1;
     }
@@ -363,8 +397,19 @@ function renderInlineSegments(text: string, keyPrefix: string): React.ReactNode[
 }
 
 export const MathMarkdownPreview: React.FC<MathMarkdownPreviewProps> = React.memo(
-  ({ content, isStreaming = false, className = '' }) => {
-    const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
+  ({ content, isStreaming = false, className = '', respectExamMode = false }) => {
+    const { isExamMode, katexMacroVersion, autoNumbering } = useSoftMathUi();
+    const effectiveContent = useMemo(
+      () =>
+        respectExamMode && isExamMode
+          ? stripExamSolutionsFromMarkdown(content, {
+              proofPlaceholder: '> *Démonstration masquée (Mode Examen).*',
+            })
+          : content,
+      [content, respectExamMode, isExamMode]
+    );
+    const blocks = useMemo(() => parseMarkdownBlocks(effectiveContent), [effectiveContent]);
+    void katexMacroVersion;
 
     if (!content.trim() && isStreaming) {
       return (
@@ -376,7 +421,10 @@ export const MathMarkdownPreview: React.FC<MathMarkdownPreviewProps> = React.mem
     }
 
     return (
-      <div className={`space-y-2 text-[13px] leading-relaxed text-stone-800 dark:text-zinc-200 ${className}`}>
+      <div
+        data-auto-numbering={autoNumbering ? 'true' : 'false'}
+        className={`space-y-2 text-[13px] leading-relaxed text-stone-800 dark:text-zinc-200 ${className}`}
+      >
         {blocks.map((block, index) => {
           const key = `blk-${index}`;
           switch (block.type) {
@@ -405,13 +453,22 @@ export const MathMarkdownPreview: React.FC<MathMarkdownPreviewProps> = React.mem
                   </div>
                 );
               }
-              const html = renderKatexHtml(block.latex, true);
+              const eqMeta = parseBlockMathMeta(block.latex);
+              const html = renderKatexHtml(eqMeta.body, true);
               return (
                 <div
                   key={key}
-                  className="overflow-x-auto rounded-lg bg-stone-50/90 px-2.5 py-1.5 text-stone-900 dark:bg-zinc-900/70 dark:text-zinc-100"
-                  dangerouslySetInnerHTML={{ __html: html }}
-                />
+                  data-math-numbered={eqMeta.numbered ? 'true' : undefined}
+                  className="flex items-center justify-between gap-2 overflow-x-auto rounded-lg bg-stone-50/90 px-2.5 py-1.5 text-stone-900 dark:bg-zinc-900/70 dark:text-zinc-100"
+                >
+                  <div
+                    className="min-w-0 flex-1"
+                    dangerouslySetInnerHTML={{ __html: html }}
+                  />
+                  {eqMeta.numbered && (
+                    <span className="softmath-eq-num shrink-0 font-serif text-xs text-stone-500 dark:text-zinc-400" />
+                  )}
+                </div>
               );
             }
 
@@ -429,6 +486,71 @@ export const MathMarkdownPreview: React.FC<MathMarkdownPreviewProps> = React.mem
                       </div>
                     )}
                     <VariationTableCanvas config={parsedTable} />
+                  </div>
+                );
+              }
+              if (block.lang === 'softmath-matrix') {
+                const parsedMatrix = parseMatrixBlockConfig(block.code);
+                const html = renderKatexHtml(matrixBlockConfigToLatex(parsedMatrix), true);
+                return (
+                  <div
+                    key={key}
+                    className="overflow-x-auto rounded-lg border border-stone-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {parsedMatrix.title && (
+                      <div className="mb-1 text-[11px] font-semibold text-stone-700 dark:text-zinc-200">
+                        {parsedMatrix.title}
+                      </div>
+                    )}
+                    <div dangerouslySetInnerHTML={{ __html: html }} />
+                  </div>
+                );
+              }
+              if (block.lang === 'softmath-proba') {
+                const parsedTree = parseProbabilityTreeConfig(block.code);
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-lg border border-stone-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {parsedTree.title && (
+                      <div className="mb-1.5 text-[11px] font-semibold text-stone-700 dark:text-zinc-200">
+                        {parsedTree.title}
+                      </div>
+                    )}
+                    <ProbabilityTreeCanvas config={parsedTree} />
+                  </div>
+                );
+              }
+              if (block.lang === 'softmath-3d') {
+                const parsed3d = parseSurface3DConfig(block.code);
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-lg border border-stone-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {parsed3d.title && (
+                      <div className="mb-1 text-[11px] font-semibold text-stone-700 dark:text-zinc-200">
+                        {parsed3d.title}
+                      </div>
+                    )}
+                    <Surface3DCanvas config={parsed3d} />
+                  </div>
+                );
+              }
+              if (block.lang === 'softmath-geometry') {
+                const parsedGeo = parseGeometry2DConfig(block.code);
+                return (
+                  <div
+                    key={key}
+                    className="overflow-hidden rounded-lg border border-stone-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    {parsedGeo.title && (
+                      <div className="mb-1 text-[11px] font-semibold text-stone-700 dark:text-zinc-200">
+                        {parsedGeo.title}
+                      </div>
+                    )}
+                    <Geometry2DCanvas config={parsedGeo} />
                   </div>
                 );
               }

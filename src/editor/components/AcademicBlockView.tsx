@@ -7,11 +7,15 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Eye,
+  EyeOff,
   Landmark,
   Lightbulb,
   PenTool,
   Trash2,
 } from 'lucide-react';
+import { useState } from 'react';
+import { useSoftMathUi } from '../../contexts/SoftMathUiContext';
 import type { AcademicKind } from '../extensions/AcademicBlock';
 
 interface AcademicVisualMeta {
@@ -100,6 +104,10 @@ export function AcademicBlockView({
   const collapsed = Boolean(node.attrs.collapsed);
   const meta = ACADEMIC_META[kind] ?? ACADEMIC_META.theorem;
   const Icon = meta.Icon;
+  const { isExamMode } = useSoftMathUi();
+  const [revealedInExam, setRevealedInExam] = useState(false);
+
+  const isMaskedByExam = isExamMode && kind === 'proof' && !revealedInExam;
 
   return (
     <NodeViewWrapper
@@ -148,6 +156,13 @@ export function AcademicBlockView({
 
         <Icon className={`h-3.5 w-3.5 shrink-0 opacity-75 ${meta.accentTextClass}`} />
 
+        {kind !== 'proof' && (
+          <span
+            aria-hidden="true"
+            className={`softmath-academic-num text-xs font-bold ${meta.accentTextClass}`}
+          />
+        )}
+
         <input
           type="text"
           value={title}
@@ -157,6 +172,31 @@ export function AcademicBlockView({
           aria-label={`Titre : ${meta.label}`}
           className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-stone-800 placeholder:font-normal placeholder:text-stone-400/80 focus:outline-none dark:text-zinc-100 dark:placeholder:text-zinc-500"
         />
+
+        {isExamMode && kind === 'proof' && (
+          <button
+            type="button"
+            onClick={() => setRevealedInExam((v) => !v)}
+            title={
+              revealedInExam
+                ? 'Remasquer la démonstration (Mode Examen)'
+                : 'Révéler temporairement pour vérifier'
+            }
+            className="inline-flex items-center gap-1 rounded border border-amber-400/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-500/20 print:hidden dark:text-amber-300"
+          >
+            {revealedInExam ? (
+              <>
+                <EyeOff className="h-3 w-3" />
+                Masquer
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" />
+                Révéler (Examen)
+              </>
+            )}
+          </button>
+        )}
 
         <button
           type="button"
@@ -173,7 +213,7 @@ export function AcademicBlockView({
       <div
         className={`softmath-academic-content mt-2 pl-1 ${
           collapsed ? 'hidden print:block' : ''
-        }`}
+        } ${isMaskedByExam ? 'hidden softmath-exam-hidden' : ''}`}
       >
         <NodeViewContent className="outline-none" />
         {kind === 'proof' && (
@@ -187,7 +227,17 @@ export function AcademicBlockView({
         )}
       </div>
 
-      {collapsed && (
+      {isMaskedByExam && (
+        <div
+          contentEditable={false}
+          onClick={() => setRevealedInExam(true)}
+          className="softmath-exam-hidden mt-2 cursor-pointer rounded-lg border border-dashed border-amber-400/60 bg-white/50 px-3 py-2 text-xs italic text-amber-800/80 hover:bg-white/80 print:block dark:bg-zinc-900/40 dark:text-amber-300/80"
+        >
+          Mode Examen actif — Démonstration masquée. Rédigez sur feuille puis cliquez pour révéler.
+        </div>
+      )}
+
+      {collapsed && !isMaskedByExam && (
         <p
           contentEditable={false}
           onClick={() => updateAttributes({ collapsed: false })}

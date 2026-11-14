@@ -11,6 +11,10 @@ import { generateMathStructureLatex } from '../utils/mathTemplates';
 import { insertAcademicBlockNode } from './AcademicBlock';
 import { insertNewDrawingBlock } from './SoftExcalidraw';
 import { insertFunctionPlotBlock } from './SoftFunctionPlot';
+import { insertGeometry2DBlock } from './SoftGeometry2D';
+import { insertMatrixBlock } from './SoftMatrixBlock';
+import { insertProbabilityTreeBlock } from './SoftProbabilityTree';
+import { insertSurface3DBlock } from './SoftSurface3D';
 import { insertVariationTableBlock } from './SoftVariationTable';
 
 function normalizeSearchText(value: string): string {
@@ -281,11 +285,71 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
   },
   {
     id: 'matrix',
-    title: 'Matrice (2×2)',
-    description: 'Bloc LaTeX prérempli pour matrice (modifiable via grille)',
-    keywords: ['matrice', 'matrix', 'determinant', 'algèbre'],
+    title: 'Matrice & Pivot de Gauss',
+    description: 'Grille interactive, dét, trace, rang, inverse et système AX = B',
+    keywords: ['matrice', 'matrix', 'determinant', 'gauss', 'pivot', 'algebre', 'algèbre', 'inverse'],
     badge: '/matrice',
     icon: 'matrix',
+    run: ({ editor, range }) => {
+      const typedEditor = editor as Editor;
+      if (range) {
+        typedEditor.chain().focus().deleteRange(range).run();
+      }
+      insertMatrixBlock(typedEditor);
+    },
+  },
+  {
+    id: 'probabilityTree',
+    title: 'Arbre de probabilités',
+    description: 'Arbre pondéré, vérif Σ=1, probabilités totales et Bayes',
+    keywords: ['arbre', 'probabilite', 'probabilité', 'bayes', 'bernoulli', 'probas'],
+    badge: '/arbre',
+    icon: 'proba',
+    run: ({ editor, range }) => {
+      const typedEditor = editor as Editor;
+      if (range) {
+        typedEditor.chain().focus().deleteRange(range).run();
+      }
+      insertProbabilityTreeBlock(typedEditor);
+    },
+  },
+  {
+    id: 'surface3d',
+    title: 'Surface 3D z = f(x, y)',
+    description: 'Surface 3D rotative à la souris avec projection et palettes',
+    keywords: ['3d', 'surface', 'mesh', 'fonction', 'z'],
+    badge: '/3d',
+    icon: 'surface3d',
+    run: ({ editor, range }) => {
+      const typedEditor = editor as Editor;
+      if (range) {
+        typedEditor.chain().focus().deleteRange(range).run();
+      }
+      insertSurface3DBlock(typedEditor);
+    },
+  },
+  {
+    id: 'geometry2d',
+    title: 'Géométrie analytique 2D',
+    description: 'Repère interactif avec points, vecteurs, droites, cercles & mesures',
+    keywords: ['geometrie', 'géométrie', 'repere', 'repère', 'point', 'vecteur', 'cercle', 'droite'],
+    badge: '/geometrie',
+    icon: 'geometry',
+    run: ({ editor, range }) => {
+      const typedEditor = editor as Editor;
+      if (range) {
+        typedEditor.chain().focus().deleteRange(range).run();
+      }
+      insertGeometry2DBlock(typedEditor);
+    },
+  },
+  {
+    id: 'matrixLatex',
+    title: 'Matrice rapide (LaTeX brut)',
+    description: 'Bloc LaTeX $$ simple pour matrice 2×2',
+    keywords: ['latex-matrice', 'pmatrix'],
+    badge: '/pmatrix',
+    icon: 'math',
     run: ({ editor, range }) => {
       const { latex } = generateMathStructureLatex('pmatrix', 2, 2, true);
       insertBlockNodeAtSelection(

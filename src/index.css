@@ -386,4 +386,48 @@ html.dark ::-webkit-scrollbar-thumb:hover {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  [data-exam-mode="true"] .softmath-exam-hidden {
+    display: none !important;
+  }
+}
+
+/* Automatic theorem / definition / equation CSS counters */
+[data-auto-numbering] {
+  counter-reset: sm-def sm-theo sm-ex sm-exo sm-eq;
+}
+
+[data-auto-numbering="true"] [data-academic-kind="definition"] {
+  counter-increment: sm-def;
+}
+[data-auto-numbering="true"] [data-academic-kind="definition"] .softmath-academic-num::after {
+  content: "\00a0" counter(sm-def);
+}
+
+[data-auto-numbering="true"] [data-academic-kind="theorem"] {
+  counter-increment: sm-theo;
+}
+[data-auto-numbering="true"] [data-academic-kind="theorem"] .softmath-academic-num::after {
+  content: "\00a0" counter(sm-theo);
+}
+
+[data-auto-numbering="true"] [data-academic-kind="example"] {
+  counter-increment: sm-ex;
+}
+[data-auto-numbering="true"] [data-academic-kind="example"] .softmath-academic-num::after {
+  content: "\00a0" counter(sm-ex);
+}
+
+[data-auto-numbering="true"] [data-academic-kind="exercise"] {
+  counter-increment: sm-exo;
+}
+[data-auto-numbering="true"] [data-academic-kind="exercise"] .softmath-academic-num::after {
+  content: "\00a0" counter(sm-exo);
+}
+
+[data-auto-numbering] [data-math-numbered="true"] {
+  counter-increment: sm-eq;
+}
+[data-auto-numbering] [data-math-numbered="true"] .softmath-eq-num::after {
+  content: "(" counter(sm-eq) ")";
 }

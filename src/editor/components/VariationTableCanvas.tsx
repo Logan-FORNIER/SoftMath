@@ -1,5 +1,6 @@
 import { useId } from 'react';
-import katex from 'katex';
+import { useSoftMathUi } from '../../contexts/SoftMathUiContext';
+import { renderKatexWithMacros } from '../../services/katexMacrosService';
 import type {
   VariationArrowKind,
   VariationBoundaryPos,
@@ -12,7 +13,7 @@ export function renderVariationKatex(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
   try {
-    return katex.renderToString(trimmed, {
+    return renderKatexWithMacros(trimmed, {
       displayMode: false,
       throwOnError: false,
       strict: 'ignore',
@@ -122,6 +123,7 @@ function KatexCellText({
   placeholder?: string;
   className?: string;
 }) {
+  useSoftMathUi();
   const html = renderVariationKatex(value);
   if (!html) {
     return (

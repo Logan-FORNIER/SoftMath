@@ -52,8 +52,10 @@ export interface AiExecutionRoute {
 
 export type AiInlineActionKind =
   | 'verify-rigor'
+  | 'verify-calculation'
   | 'detail-steps'
   | 'generate-exercise'
+  | 'generate-visual'
   | 'convert-latex';
 
 export interface AiChatMessage {

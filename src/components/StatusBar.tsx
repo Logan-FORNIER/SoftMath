@@ -8,6 +8,7 @@ import {
   Settings2,
   Sparkles,
 } from 'lucide-react';
+import { PomodoroTimer } from './PomodoroTimer';
 import { UpdaterBadge, type UpdaterBadgeProps } from './UpdaterBadge';
 import { fileToAiImageAttachment } from '../services/aiService';
 import type {
@@ -193,6 +194,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             Génération…
           </span>
         )}
+
+        <PomodoroTimer />
 
         <UpdaterBadge {...updaterProps} />
 

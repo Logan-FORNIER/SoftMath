@@ -3,21 +3,55 @@ import { AlertCircle, FileDown, Minimize2, X } from 'lucide-react';
 import { AiSettingsModal } from './components/AiSettingsModal';
 import { EditorArea, type EditorAreaHandle } from './components/EditorArea';
 import { FlashcardReviewModal } from './components/FlashcardReviewModal';
+import { KnowledgeGraphModal } from './components/KnowledgeGraphModal';
+import { MacrosSettingsModal } from './components/MacrosSettingsModal';
+import { NoteTemplatesModal } from './components/NoteTemplatesModal';
 import { QuickSearchModal } from './components/QuickSearchModal';
 import { Sidebar } from './components/Sidebar';
+import { SnapshotHistoryModal } from './components/SnapshotHistoryModal';
 import { StatusBar } from './components/StatusBar';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { WorkspacePrintModal } from './components/WorkspacePrintModal';
+import {
+  SoftMathUiContext,
+  type SoftMathUiContextValue,
+} from './contexts/SoftMathUiContext';
+import { setWorkspaceWikiNotesProvider } from './editor/extensions/SoftWikiLink';
 import { useAiWorkspace } from './hooks/useAiWorkspace';
 import { useAppUpdater } from './hooks/useAppUpdater';
 import { useTheme } from './hooks/useTheme';
 import { useTabWorkspace } from './hooks/useTabWorkspace';
-import { exportLatexDocumentFile, formatFsError } from './services/fsService';
+import {
+  buildNoteSnippet,
+  buildWorkspaceKnowledgeGraph,
+  findBacklinksForNote,
+  resolveWikiTarget,
+  type WorkspaceNoteSnapshot,
+} from './services/backlinkService';
+import {
+  exportLatexDocumentFile,
+  formatFsError,
+  readNoteContent,
+} from './services/fsService';
+import {
+  KATEX_MACROS_CHANGED_EVENT,
+  loadKatexMacroEntries,
+  type KatexMacroEntry,
+} from './services/katexMacrosService';
 import { exportNoteToLatex } from './services/latexExportService';
+import type { NoteTemplate } from './services/noteTemplateService';
 import { flattenWorkspaceNotes } from './services/searchService';
+import { saveNoteSnapshot } from './services/snapshotService';
+import {
+  exportWorkspaceToLatex,
+  type WorkspaceExportNoteItem,
+} from './services/workspaceExportService';
 
 const OUTLINE_STORAGE_KEY = 'softmath:outlineOpen';
+const EXAM_MODE_STORAGE_KEY = 'softmath:examMode';
+const AUTO_NUMBERING_STORAGE_KEY = 'softmath:autoNumbering';
 
 export function App() {
   const { theme, toggleTheme } = useTheme();
@@ -109,6 +143,34 @@ export function App() {
   });
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isFlashcardsOpen, setIsFlashcardsOpen] = useState(false);
+  const [isMacrosOpen, setIsMacrosOpen] = useState(false);
+  const [isGraphOpen, setIsGraphOpen] = useState(false);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [isSnapshotsOpen, setIsSnapshotsOpen] = useState(false);
+  const [isWorkspacePrintOpen, setIsWorkspacePrintOpen] = useState(false);
+  const [katexMacros, setKatexMacros] = useState<KatexMacroEntry[]>(() =>
+    loadKatexMacroEntries()
+  );
+  const [katexMacroVersion, setKatexMacroVersion] = useState(0);
+  const [isExamMode, setIsExamMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(EXAM_MODE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [autoNumbering, setAutoNumbering] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(AUTO_NUMBERING_STORAGE_KEY);
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const [workspaceFileContents, setWorkspaceFileContents] = useState<Map<string, string>>(
+    () => new Map()
+  );
+  const lastAutoSnapshotAtRef = useRef<Record<string, number>>({});
   const [isPreparingPrint, setIsPreparingPrint] = useState(false);
   const [focusTitleSignal, setFocusTitleSignal] = useState(0);
   const [latexFeedback, setLatexFeedback] = useState<string | null>(null);
@@ -142,6 +204,158 @@ export function App() {
         : entry.displayName,
     }));
   }, [tree, rootPath]);
+
+  useEffect(() => {
+    const handleMacrosChanged = () => {
+      setKatexMacros(loadKatexMacroEntries());
+      setKatexMacroVersion((v) => v + 1);
+    };
+    window.addEventListener(KATEX_MACROS_CHANGED_EVENT, handleMacrosChanged);
+    return () => {
+      window.removeEventListener(KATEX_MACROS_CHANGED_EVENT, handleMacrosChanged);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!rootPath) {
+      setWorkspaceFileContents(new Map());
+      return;
+    }
+    let cancelled = false;
+    const entries = flattenWorkspaceNotes(tree, rootPath);
+    void (async () => {
+      const loaded = new Map<string, string>();
+      const BATCH_SIZE = 12;
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        if (cancelled) return;
+        const batch = entries.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(async (entry) => {
+            try {
+              const txt = await readNoteContent(entry.path);
+              return [entry.path, txt] as const;
+            } catch {
+              return [entry.path, ''] as const;
+            }
+          })
+        );
+        for (const [notePath, txt] of results) {
+          loaded.set(notePath, txt);
+        }
+      }
+      if (!cancelled) {
+        setWorkspaceFileContents(loaded);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rootPath, tree]);
+
+  const workspaceNoteSnapshots = useMemo<WorkspaceNoteSnapshot[]>(() => {
+    if (!rootPath) return [];
+    const entries = flattenWorkspaceNotes(tree, rootPath);
+    const liveMap = new Map<string, string>();
+    for (const tab of openTabs) {
+      liveMap.set(tab.path, tab.content);
+    }
+    if (activeNote) {
+      liveMap.set(activeNote.path, activeNote.content);
+    }
+    if (secondaryNote) {
+      liveMap.set(secondaryNote.path, secondaryNote.content);
+    }
+    return entries.map((entry) => {
+      const relativePath = entry.relativeFolder
+        ? `${entry.relativeFolder}/${entry.name}`
+        : entry.name;
+      return {
+        path: entry.path,
+        displayName: entry.displayName,
+        relativePath,
+        content: liveMap.get(entry.path) ?? workspaceFileContents.get(entry.path) ?? '',
+      };
+    });
+  }, [rootPath, tree, openTabs, activeNote, secondaryNote, workspaceFileContents]);
+
+  const workspaceExportNotes = useMemo<WorkspaceExportNoteItem[]>(
+    () =>
+      workspaceNoteSnapshots.map((snap) => ({
+        title: snap.displayName,
+        relativePath: snap.relativePath,
+        content: snap.content,
+      })),
+    [workspaceNoteSnapshots]
+  );
+
+  useEffect(() => {
+    setWorkspaceWikiNotesProvider(() =>
+      workspaceNoteSnapshots.map((snap) => ({
+        path: snap.path,
+        displayName: snap.displayName,
+        relativePath: snap.relativePath,
+      }))
+    );
+    return () => {
+      setWorkspaceWikiNotesProvider(() => []);
+    };
+  }, [workspaceNoteSnapshots]);
+
+  const backlinksForFocusedNote = useMemo(() => {
+    if (!focusedNote) return [];
+    const currentSnap = workspaceNoteSnapshots.find((n) => n.path === focusedNote.path);
+    return findBacklinksForNote(
+      {
+        path: focusedNote.path,
+        displayName: focusedNote.displayName,
+        relativePath: currentSnap?.relativePath ?? focusedNote.name,
+      },
+      workspaceNoteSnapshots
+    );
+  }, [focusedNote, workspaceNoteSnapshots]);
+
+  const knowledgeGraph = useMemo(
+    () => buildWorkspaceKnowledgeGraph(workspaceNoteSnapshots),
+    [workspaceNoteSnapshots]
+  );
+
+  // Instantané local automatique périodique (>= 90s par note) dès qu'une sauvegarde aboutit
+  useEffect(() => {
+    if (!focusedNote || effectiveSaveStatus !== 'saved') return;
+    if (!focusedNote.content.trim()) return;
+    const now = Date.now();
+    const last = lastAutoSnapshotAtRef.current[focusedNote.path] ?? 0;
+    if (now - last >= 90_000) {
+      saveNoteSnapshot(focusedNote.path, focusedNote.content, 'Sauvegarde auto', {
+        skipIfIdentical: true,
+      });
+      lastAutoSnapshotAtRef.current[focusedNote.path] = now;
+    }
+  }, [focusedNote, effectiveSaveStatus]);
+
+  const toggleExamMode = useCallback(() => {
+    setIsExamMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(EXAM_MODE_STORAGE_KEY, String(next));
+      } catch {
+        // Ignore storage failures.
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAutoNumbering = useCallback(() => {
+    setAutoNumbering((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(AUTO_NUMBERING_STORAGE_KEY, String(next));
+      } catch {
+        // Ignore storage failures.
+      }
+      return next;
+    });
+  }, []);
 
   const toggleOutline = useCallback(() => {
     setIsOutlineOpen((prev) => {
@@ -217,6 +431,8 @@ export function App() {
     const tex = exportNoteToLatex({
       title: focusedNote.displayName,
       content: focusedNote.content,
+      excludeSolutions: isExamMode,
+      macros: katexMacros,
     });
     try {
       const savedPath = await exportLatexDocumentFile(focusedNote.displayName, tex);
@@ -228,7 +444,14 @@ export function App() {
         formatFsError(err, "Impossible d'exporter le document en LaTeX (.tex).")
       );
     }
-  }, [focusedNote, flushPendingSave, reportError, showLatexFeedback]);
+  }, [
+    focusedNote,
+    flushPendingSave,
+    isExamMode,
+    katexMacros,
+    reportError,
+    showLatexFeedback,
+  ]);
 
   const handleCopyLatex = useCallback(async () => {
     if (!focusedNote) {
@@ -237,6 +460,8 @@ export function App() {
     const tex = exportNoteToLatex({
       title: focusedNote.displayName,
       content: focusedNote.content,
+      excludeSolutions: isExamMode,
+      macros: katexMacros,
     });
     try {
       await navigator.clipboard.writeText(tex);
@@ -244,7 +469,157 @@ export function App() {
     } catch {
       reportError('Impossible de copier le code LaTeX dans le presse-papiers.');
     }
-  }, [focusedNote, reportError, showLatexFeedback]);
+  }, [focusedNote, isExamMode, katexMacros, reportError, showLatexFeedback]);
+
+  const handleExportWorkspaceLatex = useCallback(
+    async (selectedNotes: WorkspaceExportNoteItem[], excludeSolutions: boolean) => {
+      if (selectedNotes.length === 0) return;
+      await flushPendingSave();
+      const tex = exportWorkspaceToLatex({
+        bookTitle: rootName || 'Recueil SoftMath',
+        notes: selectedNotes,
+        excludeSolutions,
+        macros: katexMacros,
+      });
+      try {
+        const savedPath = await exportLatexDocumentFile(
+          `${rootName || 'Recueil'}-recueil`,
+          tex
+        );
+        if (savedPath) {
+          setIsWorkspacePrintOpen(false);
+          showLatexFeedback('Recueil .tex OK');
+        }
+      } catch (err) {
+        reportError(
+          formatFsError(err, "Impossible d'exporter le recueil en LaTeX (.tex).")
+        );
+      }
+    },
+    [flushPendingSave, rootName, katexMacros, showLatexFeedback, reportError]
+  );
+
+  const handleSelectNoteByPath = useCallback(
+    async (targetPath: string, inSplit = false) => {
+      if (inSplit) {
+        await openSecondaryNoteByPath(targetPath);
+      } else {
+        await switchTab(targetPath);
+      }
+    },
+    [openSecondaryNoteByPath, switchTab]
+  );
+
+  const handleOpenWikiLink = useCallback(
+    async (target: string, inSplit = false) => {
+      const resolved = resolveWikiTarget(target, workspaceNoteSnapshots);
+      if (resolved) {
+        if (inSplit) {
+          await openSecondaryNoteByPath(resolved.path);
+        } else {
+          await switchTab(resolved.path);
+        }
+        return;
+      }
+
+      const cleanTarget = target
+        .trim()
+        .replace(/^.*[\\/]/, '')
+        .replace(/\.md$/i, '');
+      if (!cleanTarget) return;
+
+      const shouldCreate = window.confirm(
+        `La note « ${cleanTarget} » n'existe pas encore dans ce dossier.\nVoulez-vous la créer maintenant ?`
+      );
+      if (!shouldCreate) return;
+
+      const createdPath = await createNewNote(
+        undefined,
+        `# ${cleanTarget}\n\nNote liée.\n`
+      );
+      if (!createdPath) return;
+
+      const renamed = await renameNode({ path: createdPath, kind: 'note' }, cleanTarget);
+      if (!renamed) {
+        setFocusTitleSignal((prev) => prev + 1);
+      }
+    },
+    [
+      workspaceNoteSnapshots,
+      openSecondaryNoteByPath,
+      switchTab,
+      createNewNote,
+      renameNode,
+    ]
+  );
+
+  const getNoteSnippet = useCallback(
+    (target: string) => {
+      const resolved = resolveWikiTarget(target, workspaceNoteSnapshots);
+      if (!resolved) return null;
+      return {
+        title: resolved.displayName,
+        path: resolved.relativePath,
+        snippet: buildNoteSnippet(resolved.content),
+      };
+    },
+    [workspaceNoteSnapshots]
+  );
+
+  const handleApplyTemplateToCurrentEmptyNote = useCallback(
+    (tpl: NoteTemplate) => {
+      if (!focusedNote) return;
+      editorAreaRef.current?.setFocusedNoteMarkdown(tpl.content);
+      setIsTemplatesOpen(false);
+    },
+    [focusedNote]
+  );
+
+  const handleCreateNoteFromTemplate = useCallback(
+    async (tpl: NoteTemplate) => {
+      const createdPath = await createNewNote(undefined, tpl.content);
+      if (!createdPath) return;
+      setIsTemplatesOpen(false);
+      const hasNameCollision = workspaceNoteSnapshots.some(
+        (n) => n.displayName.toLowerCase() === tpl.suggestedFileName.toLowerCase()
+      );
+      if (!hasNameCollision) {
+        await renameNode({ path: createdPath, kind: 'note' }, tpl.suggestedFileName);
+      }
+      setFocusTitleSignal((prev) => prev + 1);
+    },
+    [createNewNote, renameNode, workspaceNoteSnapshots]
+  );
+
+  const handleRestoreSnapshot = useCallback(
+    (content: string) => {
+      editorAreaRef.current?.setFocusedNoteMarkdown(content);
+      setIsSnapshotsOpen(false);
+      showLatexFeedback('Version restaurée');
+    },
+    [showLatexFeedback]
+  );
+
+  const uiContextValue = useMemo<SoftMathUiContextValue>(
+    () => ({
+      katexMacros,
+      katexMacroVersion,
+      isExamMode,
+      autoNumbering,
+      onOpenWikiLink: (target, inSplit) => {
+        void handleOpenWikiLink(target, inSplit);
+      },
+      getNoteSnippet,
+    }),
+    [
+      katexMacros,
+      katexMacroVersion,
+      isExamMode,
+      autoNumbering,
+      handleOpenWikiLink,
+      getNoteSnippet,
+    ]
+  );
 
   const handleCreateNote = useCallback(
     async (parentDir?: string) => {
@@ -290,6 +665,18 @@ export function App() {
       } else if (key === 'r' && e.shiftKey && rootPath) {
         e.preventDefault();
         setIsFlashcardsOpen((prev) => !prev);
+      } else if (key === 'g' && e.shiftKey && rootPath) {
+        e.preventDefault();
+        setIsGraphOpen((prev) => !prev);
+      } else if (key === 'h' && e.shiftKey && rootPath) {
+        e.preventDefault();
+        setIsSnapshotsOpen((prev) => !prev);
+      } else if (key === 'e' && e.shiftKey && rootPath) {
+        e.preventDefault();
+        toggleExamMode();
+      } else if (key === 'n' && e.shiftKey && rootPath) {
+        e.preventDefault();
+        setIsTemplatesOpen((prev) => !prev);
       } else if (
         ((key === 'b' && e.shiftKey) || (e.key === '\\' && !e.shiftKey)) &&
         rootPath
@@ -323,6 +710,7 @@ export function App() {
     flushPendingSave,
     closeTab,
     cycleTab,
+    toggleExamMode,
   ]);
 
   if (isInitializing) {
@@ -349,7 +737,11 @@ export function App() {
   const effectiveEditorTheme = isPreparingPrint ? 'light' : theme;
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-white text-stone-900 print:block print:h-auto print:overflow-visible print:bg-white print:text-stone-900 dark:bg-[#111113] dark:text-zinc-100">
+    <SoftMathUiContext.Provider value={uiContextValue}>
+      <div
+        data-exam-mode={isExamMode ? 'true' : 'false'}
+        className="relative flex h-full w-full flex-col overflow-hidden bg-white text-stone-900 print:block print:h-auto print:overflow-visible print:bg-white print:text-stone-900 dark:bg-[#111113] dark:text-zinc-100"
+      >
       <div className="flex min-h-0 flex-1 overflow-hidden print:block print:h-auto print:overflow-visible">
         <Sidebar
           isOpen={isSidebarOpen && !isZenMode}
@@ -394,6 +786,15 @@ export function App() {
                   void toggleSplitView();
                 }}
                 onOpenFlashcards={() => setIsFlashcardsOpen(true)}
+                isExamMode={isExamMode}
+                onToggleExamMode={toggleExamMode}
+                autoNumbering={autoNumbering}
+                onToggleAutoNumbering={toggleAutoNumbering}
+                onOpenMacros={() => setIsMacrosOpen(true)}
+                onOpenKnowledgeGraph={() => setIsGraphOpen(true)}
+                onOpenTemplates={() => setIsTemplatesOpen(true)}
+                onOpenSnapshots={() => setIsSnapshotsOpen(true)}
+                onOpenWorkspacePrint={() => setIsWorkspacePrintOpen(true)}
                 isCopilotOpen={ai.copilotOpen}
                 onToggleCopilot={() => ai.setCopilotOpen((prev) => !prev)}
                 onOpenAiSettings={() => ai.setSettingsOpen(true)}
@@ -488,6 +889,12 @@ export function App() {
             void handleCreateNote();
           }}
           onNotifyError={reportError}
+          backlinks={backlinksForFocusedNote}
+          onSelectBacklink={(targetPath, inSplit) => {
+            void handleSelectNoteByPath(targetPath, inSplit);
+          }}
+          onOpenKnowledgeGraph={() => setIsGraphOpen(true)}
+          onOpenTemplates={() => setIsTemplatesOpen(true)}
           isSplitView={isSplitView}
           secondaryNote={secondaryNote}
           focusedPane={focusedPane}
@@ -589,6 +996,61 @@ export function App() {
         }}
       />
 
+      <MacrosSettingsModal
+        open={isMacrosOpen}
+        onClose={() => setIsMacrosOpen(false)}
+        onSaved={(entries) => {
+          setKatexMacros(entries);
+          setKatexMacroVersion((v) => v + 1);
+        }}
+      />
+
+      <KnowledgeGraphModal
+        open={isGraphOpen}
+        graph={knowledgeGraph}
+        currentNotePath={focusedNote?.path ?? null}
+        onSelectNote={(targetPath, inSplit) => {
+          void handleSelectNoteByPath(targetPath, inSplit);
+        }}
+        onClose={() => setIsGraphOpen(false)}
+      />
+
+      <NoteTemplatesModal
+        open={isTemplatesOpen}
+        canApplyToCurrentEmptyNote={Boolean(
+          focusedNote && focusedNote.content.trim().length === 0
+        )}
+        onCreateNoteFromTemplate={(tpl) => {
+          void handleCreateNoteFromTemplate(tpl);
+        }}
+        onApplyToCurrentNote={(tpl) => handleApplyTemplateToCurrentEmptyNote(tpl)}
+        onCreateBlankNote={() => {
+          setIsTemplatesOpen(false);
+          void handleCreateNote();
+        }}
+        onClose={() => setIsTemplatesOpen(false)}
+      />
+
+      <SnapshotHistoryModal
+        open={isSnapshotsOpen}
+        notePath={focusedNote?.path ?? null}
+        noteTitle={focusedNote?.displayName ?? ''}
+        currentContent={focusedNote?.content ?? ''}
+        onRestoreContent={handleRestoreSnapshot}
+        onClose={() => setIsSnapshotsOpen(false)}
+      />
+
+      <WorkspacePrintModal
+        open={isWorkspacePrintOpen}
+        workspaceName={rootName}
+        notes={workspaceExportNotes}
+        isExamMode={isExamMode}
+        onExportLatexBundle={(selectedNotes, excludeSolutions) => {
+          void handleExportWorkspaceLatex(selectedNotes, excludeSolutions);
+        }}
+        onClose={() => setIsWorkspacePrintOpen(false)}
+      />
+
       {errorMessage && (
         <div
           role="alert"
@@ -607,6 +1069,7 @@ export function App() {
         </div>
       )}
     </div>
+    </SoftMathUiContext.Provider>
   );
 }
 

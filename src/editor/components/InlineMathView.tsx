@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
-import katex from 'katex';
 import { LatexActionButtons } from './LatexActionButtons';
 import { useLatexEditorControl } from './useLatexEditorControl';
+import { useSoftMathUi } from '../../contexts/SoftMathUiContext';
+import { renderKatexWithMacros } from '../../services/katexMacrosService';
 
 export function InlineMathView({
   node,
@@ -20,6 +21,7 @@ export function InlineMathView({
   const inputRef = useRef<HTMLInputElement>(null);
   const initialLatexRef = useRef(latex);
   const cancelEscapeRef = useRef(false);
+  const { katexMacroVersion } = useSoftMathUi();
 
   const {
     isPaletteOpen,
@@ -70,12 +72,12 @@ export function InlineMathView({
 
   const renderedHtml = useMemo(() => {
     const source = latex.trim() || '\\square';
-    return katex.renderToString(source, {
+    return renderKatexWithMacros(source, {
       displayMode: false,
       throwOnError: false,
       strict: false,
     });
-  }, [latex]);
+  }, [latex, katexMacroVersion]);
 
   const focusAfterNode = () => {
     const pos = getPos();

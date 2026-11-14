@@ -1,4 +1,5 @@
-import { ListTree, X } from 'lucide-react';
+import { Link2, ListTree, Network, X } from 'lucide-react';
+import type { BacklinkEntry } from '../services/backlinkService';
 import type { OutlineHeading } from '../types/notes';
 
 interface OutlinePanelProps {
@@ -7,6 +8,9 @@ interface OutlinePanelProps {
   activeHeadingId: string | null;
   onSelectHeading: (heading: OutlineHeading) => void;
   onClose: () => void;
+  backlinks?: BacklinkEntry[];
+  onSelectBacklink?: (path: string, inSplit?: boolean) => void;
+  onOpenKnowledgeGraph?: () => void;
 }
 
 export function OutlinePanel({
@@ -15,6 +19,9 @@ export function OutlinePanel({
   activeHeadingId,
   onSelectHeading,
   onClose,
+  backlinks = [],
+  onSelectBacklink,
+  onOpenKnowledgeGraph,
 }: OutlinePanelProps) {
   if (!isOpen) {
     return null;
@@ -88,6 +95,59 @@ export function OutlinePanel({
             })}
           </ul>
         )}
+
+        {/* Section Rétroliens & Graphe */}
+        <div className="mt-5 border-t border-stone-200/70 pt-3 dark:border-zinc-800/80">
+          <div className="mb-1.5 flex items-center justify-between px-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-stone-400 dark:text-zinc-500">
+              <Link2 className="h-3 w-3" />
+              <span>Rétroliens ({backlinks.length})</span>
+            </div>
+            {onOpenKnowledgeGraph && (
+              <button
+                type="button"
+                onClick={onOpenKnowledgeGraph}
+                title="Ouvrir le graphe de connaissances"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400"
+              >
+                <Network className="h-3 w-3" />
+                Graphe
+              </button>
+            )}
+          </div>
+
+          {backlinks.length === 0 ? (
+            <p className="px-2 py-1 text-[11px] text-stone-400 dark:text-zinc-600">
+              Aucune note ne cite celle-ci avec{' '}
+              <code className="font-mono">[[…]]</code>.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {backlinks.map((bl) => (
+                <li key={`${bl.sourcePath}:${bl.line}`}>
+                  <button
+                    type="button"
+                    onClick={(e) =>
+                      onSelectBacklink?.(
+                        bl.sourcePath,
+                        e.altKey || e.ctrlKey || e.metaKey
+                      )
+                    }
+                    title={`Clic : ouvrir • Alt+Clic : vue scindée\n${bl.snippet}`}
+                    className="w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-stone-200/60 dark:hover:bg-zinc-800/70"
+                  >
+                    <div className="truncate text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                      {bl.sourceTitle}
+                    </div>
+                    <div className="line-clamp-2 text-[10.5px] leading-snug text-stone-500 dark:text-zinc-400">
+                      {bl.snippet}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </nav>
     </aside>
   );

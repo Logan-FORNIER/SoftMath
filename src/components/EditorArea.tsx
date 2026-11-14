@@ -24,6 +24,11 @@ import type {
   AiContextSelectionPayload,
   AiImageAttachment,
 } from '../types/ai';
+import type { BacklinkEntry } from '../services/backlinkService';
+import {
+  NOTE_TEMPLATES,
+  type NoteTemplate,
+} from '../services/noteTemplateService';
 import type { OpenNote, OutlineHeading, ThemeMode } from '../types/notes';
 import { AiCopilotPanel } from './AiCopilotPanel';
 import { MathMarkdownPreview } from './MathMarkdownPreview';
@@ -32,6 +37,7 @@ import { OutlinePanel } from './OutlinePanel';
 export interface EditorAreaHandle {
   getAiBridge: () => EditorAiBridge | null;
   triggerOcrFilePicker: () => void;
+  setFocusedNoteMarkdown: (markdown: string) => void;
 }
 
 interface WorkspaceNoteOption {
@@ -49,6 +55,10 @@ interface EditorAreaProps {
   onRenameActiveNote: (newName: string) => Promise<boolean>;
   onCreateNote: () => void;
   onNotifyError?: (message: string) => void;
+  backlinks?: BacklinkEntry[];
+  onSelectBacklink?: (path: string, inSplit?: boolean) => void;
+  onOpenKnowledgeGraph?: () => void;
+  onOpenTemplates?: () => void;
   // Vue scindée (2 notes côte à côte)
   isSplitView?: boolean;
   secondaryNote?: OpenNote | null;
@@ -86,6 +96,7 @@ interface NotePaneHandle {
   getAiBridge: () => EditorAiBridge | null;
   triggerOcrFilePicker: () => void;
   insertMarkdownAtCursor: (md: string) => void;
+  setFullMarkdown: (md: string) => void;
   scrollToHeading: (pos: number) => void;
 }
 
@@ -98,6 +109,7 @@ interface NoteEditorPaneProps {
   onHeadingsChange: (headings: OutlineHeading[]) => void;
   onActiveHeadingChange: (headingId: string | null) => void;
   onNotifyError?: (message: string) => void;
+  onOpenTemplates?: () => void;
   onAiInlineAction: (
     payload: AiContextSelectionPayload,
     bridge: EditorAiBridge,
@@ -116,6 +128,7 @@ const NoteEditorPane = forwardRef<NotePaneHandle, NoteEditorPaneProps>(
       onHeadingsChange,
       onActiveHeadingChange,
       onNotifyError,
+      onOpenTemplates,
       onAiInlineAction,
       onOcrImage,
     },
@@ -150,6 +163,9 @@ const NoteEditorPane = forwardRef<NotePaneHandle, NoteEditorPaneProps>(
         },
         insertMarkdownAtCursor: (md) => {
           editorRef.current?.insertMarkdownAtCursor(md);
+        },
+        setFullMarkdown: (md) => {
+          editorRef.current?.setFullMarkdown(md);
         },
         scrollToHeading: (pos) => {
           editorRef.current?.scrollToHeading(pos);
@@ -286,6 +302,33 @@ const NoteEditorPane = forwardRef<NotePaneHandle, NoteEditorPaneProps>(
 
           <div className="my-5 h-px w-full bg-stone-100 print:bg-stone-200 dark:bg-zinc-800/70" />
 
+          {note.content.trim() === '' && (
+            <div className="mb-4 flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-stone-200 bg-stone-50/70 px-3 py-2 text-xs print:hidden dark:border-zinc-800 dark:bg-zinc-900/40">
+              <span className="mr-1 text-[11px] font-medium text-stone-400 dark:text-zinc-500">
+                Modèle rapide :
+              </span>
+              {NOTE_TEMPLATES.slice(0, 4).map((tpl: NoteTemplate) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => editorRef.current?.setFullMarkdown(tpl.content)}
+                  className="rounded-md border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-medium text-stone-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-indigo-500 dark:hover:text-indigo-300"
+                >
+                  {tpl.title}
+                </button>
+              ))}
+              {onOpenTemplates && (
+                <button
+                  type="button"
+                  onClick={onOpenTemplates}
+                  className="ml-auto text-[11px] font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+                >
+                  Tous les modèles…
+                </button>
+              )}
+            </div>
+          )}
+
           <RichMarkdownEditor
             ref={editorRef}
             sessionId={note.sessionId}
@@ -316,6 +359,10 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
       onRenameActiveNote,
       onCreateNote,
       onNotifyError,
+      backlinks = [],
+      onSelectBacklink,
+      onOpenKnowledgeGraph,
+      onOpenTemplates,
       isSplitView = false,
       secondaryNote = null,
       focusedPane = 'primary',
@@ -389,6 +436,9 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
         getAiBridge: () => getTargetPaneRef()?.getAiBridge() ?? null,
         triggerOcrFilePicker: () => {
           getTargetPaneRef()?.triggerOcrFilePicker();
+        },
+        setFocusedNoteMarkdown: (markdown: string) => {
+          getTargetPaneRef()?.setFullMarkdown(markdown);
         },
       }),
       [getTargetPaneRef],
@@ -471,6 +521,7 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
                 onHeadingsChange={handlePrimaryHeadingsChange}
                 onActiveHeadingChange={setPrimaryActiveHeadingId}
                 onNotifyError={onNotifyError}
+                onOpenTemplates={onOpenTemplates}
                 onAiInlineAction={onAiInlineAction}
                 onOcrImage={onOcrImage}
               />
@@ -565,7 +616,10 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
                     </h1>
                     <div className="my-5 h-px w-full bg-stone-100 dark:bg-zinc-800/70" />
                     <div className="softmath-prose">
-                      <MathMarkdownPreview content={activeNote.content} />
+                      <MathMarkdownPreview
+                        content={activeNote.content}
+                        respectExamMode
+                      />
                     </div>
                   </div>
                 </main>
@@ -583,6 +637,7 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
                   onHeadingsChange={handleSecondaryHeadingsChange}
                   onActiveHeadingChange={setSecondaryActiveHeadingId}
                   onNotifyError={onNotifyError}
+                  onOpenTemplates={onOpenTemplates}
                   onAiInlineAction={onAiInlineAction}
                   onOcrImage={onOcrImage}
                 />
@@ -674,6 +729,9 @@ export const EditorArea = forwardRef<EditorAreaHandle, EditorAreaProps>(
               primaryPaneRef.current?.scrollToHeading(heading.pos);
             }
           }}
+          backlinks={backlinks}
+          onSelectBacklink={onSelectBacklink}
+          onOpenKnowledgeGraph={onOpenKnowledgeGraph}
           onClose={onCloseOutline}
         />
 

@@ -9,8 +9,13 @@ import { AcademicBlock } from '../extensions/AcademicBlock';
 import { SlashCommand } from '../extensions/SlashCommand';
 import { SoftBlockMath } from '../extensions/SoftBlockMath';
 import { SoftFunctionPlot } from '../extensions/SoftFunctionPlot';
+import { SoftGeometry2D } from '../extensions/SoftGeometry2D';
 import { SoftMathEval } from '../extensions/SoftMathEval';
+import { SoftMatrixBlock } from '../extensions/SoftMatrixBlock';
+import { SoftProbabilityTree } from '../extensions/SoftProbabilityTree';
+import { SoftSurface3D } from '../extensions/SoftSurface3D';
 import { SoftVariationTable } from '../extensions/SoftVariationTable';
+import { SoftWikiLink } from '../extensions/SoftWikiLink';
 import {
   getExcalidrawStorage,
   SoftExcalidraw,
@@ -33,6 +38,7 @@ import {
   type AiMenuPosition,
 } from './AiContextMenu';
 import type { EditorAiBridge } from '../../hooks/useAiWorkspace';
+import { useSoftMathUi } from '../../contexts/SoftMathUiContext';
 import { fileToAiImageAttachment } from '../../services/aiService';
 import type {
   AiContextSelectionPayload,
@@ -131,6 +137,7 @@ export interface RichMarkdownEditorHandle {
   insertMarkdownAtCursor: (markdown: string) => void;
   replaceRangeWithMarkdown: (from: number, to: number, markdown: string) => void;
   insertMarkdownAfter: (pos: number, markdown: string) => void;
+  setFullMarkdown: (markdown: string) => void;
   triggerOcrFilePicker: () => void;
 }
 
@@ -222,6 +229,7 @@ export const RichMarkdownEditor = forwardRef<
   themeRef.current = theme;
 
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const { isExamMode, autoNumbering } = useSoftMathUi();
   const ocrFileInputRef = useRef<HTMLInputElement | null>(null);
   const openAiMenuRef = useRef<(() => void) | null>(null);
   const editorBridgeRef = useRef<EditorAiBridge | null>(null);
@@ -270,7 +278,12 @@ export const RichMarkdownEditor = forwardRef<
       AcademicBlock,
       SoftFunctionPlot,
       SoftVariationTable,
+      SoftMatrixBlock,
+      SoftProbabilityTree,
+      SoftSurface3D,
+      SoftGeometry2D,
       SoftMathEval,
+      SoftWikiLink,
       SlashCommand,
       softAiShortcut,
       Markdown.configure({
@@ -465,6 +478,16 @@ export const RichMarkdownEditor = forwardRef<
         if (!editor) return;
         insertParsedMarkdownSmart(editor, md, { mode: 'after', pos });
       },
+      setFullMarkdown: (md: string) => {
+        if (!editor || editor.isDestroyed) return;
+        editor.commands.setContent(md, {
+          contentType: 'markdown',
+          emitUpdate: true,
+        });
+        const headings = extractHeadingsFromDoc(editor.state.doc);
+        lastHeadingsRef.current = headings;
+        onHeadingsChangeRef.current?.(headings);
+      },
       triggerOcrFilePicker: () => {
         ocrFileInputRef.current?.click();
       },
@@ -523,6 +546,8 @@ export const RichMarkdownEditor = forwardRef<
   return (
     <div
       ref={wrapperRef}
+      data-exam-mode={isExamMode ? 'true' : 'false'}
+      data-auto-numbering={autoNumbering ? 'true' : 'false'}
       className="relative flex flex-1 flex-col cursor-text"
       onClick={(e) => {
         if (e.target === e.currentTarget) {

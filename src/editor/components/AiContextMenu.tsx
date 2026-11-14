@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 import {
+  Calculator,
   Camera,
   FlaskConical,
+  LineChart,
   ListOrdered,
   ShieldCheck,
   Sigma,
@@ -42,6 +44,13 @@ const MENU_ITEMS: Array<{
     accentClass: 'text-amber-600 dark:text-amber-400',
   },
   {
+    action: 'verify-calculation',
+    label: 'Auditer le calcul étape par étape',
+    description: 'Contrôle ligne par ligne des signes et simplifications',
+    Icon: Calculator,
+    accentClass: 'text-rose-600 dark:text-rose-400',
+  },
+  {
     action: 'detail-steps',
     label: 'Détailler les étapes',
     description: 'Développe les calculs intermédiaires sous le passage',
@@ -54,6 +63,13 @@ const MENU_ITEMS: Array<{
     description: 'Insère un bloc Exercice + solution repliable dessous',
     Icon: FlaskConical,
     accentClass: 'text-teal-600 dark:text-teal-400',
+  },
+  {
+    action: 'generate-visual',
+    label: 'Générer un graphe / tableau visuel',
+    description: 'Crée un /graphe ou /tableau interactif depuis la sélection',
+    Icon: LineChart,
+    accentClass: 'text-emerald-600 dark:text-emerald-400',
   },
   {
     action: 'convert-latex',

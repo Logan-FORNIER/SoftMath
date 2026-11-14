@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   buildContextualSystemPrompt,
   buildInlineActionPrompts,
+  extractValidVisualFenceFromAi,
   MATH_OCR_SYSTEM_PROMPT,
   normalizeAiMarkdownForEditor,
 } from '../services/aiPrompts';
@@ -46,8 +47,10 @@ export interface EditorAiBridge {
 
 const INLINE_ACTION_LABELS: Record<AiInlineActionKind | 'ocr', string> = {
   'verify-rigor': 'Vérification de la rigueur',
+  'verify-calculation': 'Audit de calcul étape par étape',
   'detail-steps': 'Développement des étapes',
   'generate-exercise': 'Génération d’un exercice',
+  'generate-visual': 'Génération de graphe / tableau interactif',
   'convert-latex': 'Conversion en LaTeX KaTeX',
   ocr: 'OCR mathématique (image → LaTeX)',
 };
@@ -386,14 +389,21 @@ export function useAiWorkspace({
         payload.surroundingText,
       );
 
-      // 1. Vérifier la rigueur : audit latéral sans écraser la note
-      if (payload.action === 'verify-rigor') {
+      // 1. Vérifier la rigueur / calcul : audit latéral sans écraser la note
+      if (
+        payload.action === 'verify-rigor' ||
+        payload.action === 'verify-calculation'
+      ) {
         const previewSnippet =
           payload.selectedText.length > 140
             ? `${payload.selectedText.slice(0, 140).trim()}…`
             : payload.selectedText;
+        const prefixLabel =
+          payload.action === 'verify-calculation'
+            ? 'Audit de calcul'
+            : 'Vérifier la rigueur';
         await streamToCopilot({
-          userDisplayText: `Vérifier la rigueur :\n> ${previewSnippet.replace(/\n+/g, ' ')}`,
+          userDisplayText: `${prefixLabel} :\n> ${previewSnippet.replace(/\n+/g, ' ')}`,
           userPromptForModel: prompts.userPrompt,
           kind: 'rigor-audit',
         });
@@ -464,21 +474,31 @@ export function useAiWorkspace({
           return;
         }
 
-        const normalized = normalizeAiMarkdownForEditor(accumulated, {
-          unwrapOuterCodeFence: true,
-        });
-        if (!normalized) {
-          throw new Error('La réponse générée par le modèle est vide.');
-        }
-
-        if (payload.action === 'convert-latex') {
-          editorBridge.replaceRangeWithMarkdown(
-            payload.selectionRange.from,
-            payload.selectionRange.to,
-            normalized,
-          );
+        if (payload.action === 'generate-visual') {
+          const validVisual = extractValidVisualFenceFromAi(accumulated);
+          if (!validVisual) {
+            throw new Error(
+              'Le modèle n’a pas produit de bloc visuel JSON valide.'
+            );
+          }
+          editorBridge.insertMarkdownAfter(payload.insertAfterPos, validVisual);
         } else {
-          editorBridge.insertMarkdownAfter(payload.insertAfterPos, normalized);
+          const normalized = normalizeAiMarkdownForEditor(accumulated, {
+            unwrapOuterCodeFence: true,
+          });
+          if (!normalized) {
+            throw new Error('La réponse générée par le modèle est vide.');
+          }
+
+          if (payload.action === 'convert-latex') {
+            editorBridge.replaceRangeWithMarkdown(
+              payload.selectionRange.from,
+              payload.selectionRange.to,
+              normalized,
+            );
+          } else {
+            editorBridge.insertMarkdownAfter(payload.insertAfterPos, normalized);
+          }
         }
 
         setInlineTask(null);

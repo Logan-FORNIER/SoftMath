@@ -9,7 +9,10 @@ import {
 import {
   ArrowUpDown,
   BookOpen,
+  Box,
   Code2,
+  Compass,
+  GitBranch,
   GraduationCap,
   Grid3X3,
   Heading1,
@@ -30,6 +33,9 @@ export type SlashCommandIconId =
   | 'plot'
   | 'variation'
   | 'matrix'
+  | 'proba'
+  | 'surface3d'
+  | 'geometry'
   | 'definition'
   | 'theorem'
   | 'proof'
@@ -67,6 +73,9 @@ const ICONS: Record<SlashCommandIconId, ComponentType<{ className?: string }>> =
   plot: TrendingUp,
   variation: ArrowUpDown,
   matrix: Grid3X3,
+  proba: GitBranch,
+  surface3d: Box,
+  geometry: Compass,
   definition: BookOpen,
   theorem: Landmark,
   proof: PenTool,

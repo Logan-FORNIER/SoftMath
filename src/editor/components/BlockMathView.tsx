@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react';
 import { TextSelection } from '@tiptap/pm/state';
-import katex from 'katex';
-import { Check, Pencil, Trash2 } from 'lucide-react';
+import { Check, Hash, Pencil, Trash2 } from 'lucide-react';
 import { LatexActionButtons } from './LatexActionButtons';
 import { useLatexEditorControl } from './useLatexEditorControl';
+import { useSoftMathUi } from '../../contexts/SoftMathUiContext';
+import { renderKatexWithMacros } from '../../services/katexMacrosService';
+import {
+  formatBlockMathWithMeta,
+  parseBlockMathMeta,
+} from '../utils/equationMeta';
 
 interface PreviewRender {
   html: string;
@@ -18,14 +23,14 @@ function renderBlockKatex(source: string): PreviewRender {
   }
 
   try {
-    const html = katex.renderToString(trimmed, {
+    const html = renderKatexWithMacros(trimmed, {
       displayMode: true,
       throwOnError: true,
       strict: false,
     });
     return { html, error: null };
   } catch (err) {
-    const fallbackHtml = katex.renderToString(trimmed, {
+    const fallbackHtml = renderKatexWithMacros(trimmed, {
       displayMode: true,
       throwOnError: false,
       strict: false,
@@ -53,6 +58,7 @@ export function BlockMathView({
   const initialLatexRef = useRef(latex);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelEscapeRef = useRef(false);
+  const { katexMacroVersion } = useSoftMathUi();
 
   useEffect(() => {
     if (!isEditing) {
@@ -218,10 +224,37 @@ export function BlockMathView({
     }
   };
 
-  const preview = useMemo(
-    () => renderBlockKatex(isEditing ? draft : latex),
+  const meta = useMemo(
+    () => parseBlockMathMeta(isEditing ? draft : latex),
     [isEditing, draft, latex]
   );
+
+  const preview = useMemo(
+    () => renderBlockKatex(meta.body),
+    [meta.body, katexMacroVersion]
+  );
+
+  const toggleNumbered = () => {
+    const parsed = parseBlockMathMeta(draft);
+    const nextRaw = formatBlockMathWithMeta({
+      ...parsed,
+      numbered: !parsed.numbered,
+    });
+    setDraft(nextRaw);
+    updateAttributes({ latex: nextRaw });
+  };
+
+  const updateEqLabel = (nextLabel: string) => {
+    const parsed = parseBlockMathMeta(draft);
+    const cleanLabel = nextLabel.trim();
+    const nextRaw = formatBlockMathWithMeta({
+      ...parsed,
+      numbered: cleanLabel ? true : parsed.numbered,
+      label: cleanLabel,
+    });
+    setDraft(nextRaw);
+    updateAttributes({ latex: nextRaw });
+  };
 
   if (isEditing) {
     return (
@@ -253,6 +286,31 @@ export function BlockMathView({
               </div>
 
               <div className="relative flex items-center gap-1">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={toggleNumbered}
+                  title="Numéroter cette équation (1), (2)…"
+                  className={`inline-flex h-6 items-center gap-0.5 rounded px-1.5 text-[11px] font-medium transition-colors ${
+                    meta.numbered
+                      ? 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300'
+                      : 'text-stone-400 hover:bg-stone-200/70 dark:text-zinc-500 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <Hash className="h-3 w-3" />
+                  <span>(N)</span>
+                </button>
+                {meta.numbered && (
+                  <input
+                    type="text"
+                    value={meta.label}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => updateEqLabel(e.target.value)}
+                    placeholder="eq:nom"
+                    title="Label LaTeX (\label{...})"
+                    className="w-20 rounded border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-700 focus:border-indigo-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                  />
+                )}
                 <LatexActionButtons
                   align="right"
                   isPaletteOpen={isPaletteOpen}
@@ -370,7 +428,13 @@ export function BlockMathView({
   }
 
   return (
-    <NodeViewWrapper as="div" className="my-4" contentEditable={false}>
+    <NodeViewWrapper
+      as="div"
+      className="my-4"
+      contentEditable={false}
+      data-math-numbered={meta.numbered ? 'true' : undefined}
+      data-eq-label={meta.label || undefined}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -398,10 +462,30 @@ export function BlockMathView({
         </span>
 
         {preview.html ? (
-          <div
-            className="katex-block-preview w-full overflow-x-auto text-center text-stone-900 dark:text-zinc-100"
-            dangerouslySetInnerHTML={{ __html: preview.html }}
-          />
+          <div className="flex w-full items-center justify-between gap-2">
+            <div
+              className="katex-block-preview min-w-0 flex-1 overflow-x-auto text-center text-stone-900 dark:text-zinc-100"
+              dangerouslySetInnerHTML={{ __html: preview.html }}
+            />
+            {meta.numbered && (
+              <div className="flex shrink-0 items-center gap-1.5">
+                {meta.label && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void navigator.clipboard?.writeText(`\\eqref{${meta.label}}`);
+                    }}
+                    title={`Copier \\eqref{${meta.label}}`}
+                    className="rounded bg-stone-100 px-1.5 py-0.5 font-mono text-[10px] text-stone-500 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-indigo-500/15 hover:text-indigo-600 print:hidden dark:bg-zinc-800 dark:text-zinc-400"
+                  >
+                    #{meta.label}
+                  </button>
+                )}
+                <span className="softmath-eq-num font-serif text-sm text-stone-500 dark:text-zinc-400" />
+              </div>
+            )}
+          </div>
         ) : (
           <span className="text-xs italic text-stone-400 dark:text-zinc-500">
             Bloc mathématique vide (cliquer pour éditer)

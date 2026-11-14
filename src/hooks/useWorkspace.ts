@@ -353,7 +353,7 @@ export function useWorkspace() {
   );
 
   const createNewNote = useCallback(
-    async (parentDir?: string) => {
+    async (parentDir?: string, initialContent = '') => {
       const targetDir = parentDir ?? rootPath;
       if (!targetDir) {
         return null;
@@ -364,6 +364,9 @@ export function useWorkspace() {
 
       try {
         const created = await createMarkdownNote(targetDir);
+        if (initialContent) {
+          await writeNoteContent(created.path, initialContent);
+        }
         if (parentDir) {
           setExpandedFolders((prev) => new Set(prev).add(parentDir));
         }
@@ -379,8 +382,8 @@ export function useWorkspace() {
           path: created.path,
           name: created.name,
           displayName: created.displayName,
-          content: '',
-          lastSavedContent: '',
+          content: initialContent,
+          lastSavedContent: initialContent,
         });
         setSaveStatus('saved');
         return created.path;

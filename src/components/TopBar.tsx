@@ -1,22 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  BookOpenCheck,
   Bot,
+  Braces,
   Check,
   ChevronDown,
   Columns2,
   Copy,
+  EyeOff,
   FileCode2,
   FileDown,
+  FilePlus2,
+  Hash,
+  History,
   Layers,
   ListTree,
   Loader2,
   Maximize2,
   Minimize2,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
+  Printer,
   Search,
   Settings2,
+  Wrench,
 } from 'lucide-react';
 import { getRelativeSegments, stripMdExtension } from '../services/fsService';
 import type { OpenNote, SaveStatus, ThemeMode } from '../types/notes';
@@ -30,6 +39,15 @@ interface TopBarProps {
   isSplitView?: boolean;
   onToggleSplitView?: () => void;
   onOpenFlashcards?: () => void;
+  isExamMode?: boolean;
+  onToggleExamMode?: () => void;
+  autoNumbering?: boolean;
+  onToggleAutoNumbering?: () => void;
+  onOpenMacros?: () => void;
+  onOpenKnowledgeGraph?: () => void;
+  onOpenTemplates?: () => void;
+  onOpenSnapshots?: () => void;
+  onOpenWorkspacePrint?: () => void;
   isCopilotOpen?: boolean;
   onToggleCopilot?: () => void;
   onOpenAiSettings?: () => void;
@@ -96,6 +114,15 @@ export function TopBar({
   isSplitView = false,
   onToggleSplitView,
   onOpenFlashcards,
+  isExamMode = false,
+  onToggleExamMode,
+  autoNumbering = true,
+  onToggleAutoNumbering,
+  onOpenMacros,
+  onOpenKnowledgeGraph,
+  onOpenTemplates,
+  onOpenSnapshots,
+  onOpenWorkspacePrint,
   isCopilotOpen = false,
   onToggleCopilot,
   onOpenAiSettings,
@@ -114,10 +141,12 @@ export function TopBar({
   onToggleTheme,
 }: TopBarProps) {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const toolsMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!isExportMenuOpen) {
+    if (!isExportMenuOpen && !isToolsMenuOpen) {
       return;
     }
     const handleOutsideClick = (event: MouseEvent) => {
@@ -127,10 +156,17 @@ export function TopBar({
       ) {
         setIsExportMenuOpen(false);
       }
+      if (
+        toolsMenuRef.current &&
+        !toolsMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsToolsMenuOpen(false);
+      }
     };
     const handleEsc = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsExportMenuOpen(false);
+        setIsToolsMenuOpen(false);
       }
     };
     window.addEventListener('mousedown', handleOutsideClick);
@@ -139,7 +175,7 @@ export function TopBar({
       window.removeEventListener('mousedown', handleOutsideClick);
       window.removeEventListener('keydown', handleEsc);
     };
-  }, [isExportMenuOpen]);
+  }, [isExportMenuOpen, isToolsMenuOpen]);
 
   const segments = activeNote
     ? getRelativeSegments(rootPath, activeNote.path).map((seg, idx, arr) =>
@@ -231,6 +267,130 @@ export function TopBar({
             <span className="hidden lg:inline">Réviser</span>
           </button>
         )}
+
+        {onToggleExamMode && (
+          <button
+            type="button"
+            data-testid="topbar-toggle-exam"
+            onClick={onToggleExamMode}
+            aria-pressed={isExamMode}
+            title={
+              isExamMode
+                ? 'Mode Examen actif (démos et corrigés masqués dans l’éditeur, PDF et .tex)'
+                : 'Activer le Mode Examen (masquer preuves & corrigés)'
+            }
+            className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors ${
+              isExamMode
+                ? 'bg-amber-500/15 text-amber-700 ring-1 ring-amber-500/40 dark:bg-amber-500/20 dark:text-amber-300'
+                : 'text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+            }`}
+          >
+            {isExamMode ? (
+              <EyeOff className="h-3.5 w-3.5" />
+            ) : (
+              <BookOpenCheck className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden lg:inline">Examen</span>
+          </button>
+        )}
+
+        <div ref={toolsMenuRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setIsToolsMenuOpen((prev) => !prev)}
+            aria-expanded={isToolsMenuOpen}
+            aria-haspopup="menu"
+            title="Outils avancés (Macros, Graphe, Modèles, Snapshots…)"
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-200/70 hover:text-stone-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+          >
+            <Wrench className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">Outils</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </button>
+
+          {isToolsMenuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 z-40 mt-1.5 w-60 overflow-hidden rounded-lg border border-stone-200 bg-white py-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              {onOpenTemplates && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenTemplates();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  <FilePlus2 className="h-3.5 w-3.5 text-indigo-500" />
+                  <span>Modèles de notes (Ctrl+Maj+N)</span>
+                </button>
+              )}
+              {onOpenMacros && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenMacros();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  <Braces className="h-3.5 w-3.5 text-sky-500" />
+                  <span>Macros KaTeX (\R, \N, …)</span>
+                </button>
+              )}
+              {onOpenKnowledgeGraph && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenKnowledgeGraph();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  <Network className="h-3.5 w-3.5 text-emerald-500" />
+                  <span>Graphe de connaissances ([[…]])</span>
+                </button>
+              )}
+              {onOpenSnapshots && activeNote && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onOpenSnapshots();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  <History className="h-3.5 w-3.5 text-amber-500" />
+                  <span>Historique local (Snapshots)</span>
+                </button>
+              )}
+              {onToggleAutoNumbering && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsToolsMenuOpen(false);
+                    onToggleAutoNumbering();
+                  }}
+                  className="flex w-full items-center justify-between gap-2 border-t border-stone-100 px-3 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Hash className="h-3.5 w-3.5 text-violet-500" />
+                    <span>Numérotation auto</span>
+                  </span>
+                  <span className="font-mono text-[10px] text-indigo-500">
+                    {autoNumbering ? 'ON' : 'OFF'}
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {activeNote && (
           <>
@@ -374,6 +534,21 @@ export function TopBar({
                     >
                       <Copy className="h-3.5 w-3.5 text-stone-400" />
                       <span>Copier le code LaTeX</span>
+                    </button>
+                  )}
+
+                  {onOpenWorkspacePrint && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsExportMenuOpen(false);
+                        onOpenWorkspacePrint();
+                      }}
+                      className="flex w-full items-center gap-2 border-t border-stone-100 px-3 py-1.5 text-left text-xs text-stone-700 transition-colors hover:bg-stone-100 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      <Printer className="h-3.5 w-3.5 text-emerald-500" />
+                      <span>Recueil multi-notes (PDF / .tex)…</span>
                     </button>
                   )}
                 </div>

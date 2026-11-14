@@ -1,17 +1,41 @@
+import { parseBlockMathMeta } from '../editor/utils/equationMeta';
 import {
   parseFunctionPlotConfig,
   type FunctionPlotConfig,
 } from '../editor/extensions/SoftFunctionPlot';
 import {
+  analyzeGeometry2D,
+  parseGeometry2DConfig,
+  type Geometry2DConfig,
+} from '../editor/extensions/SoftGeometry2D';
+import { parseMatrixBlockConfig } from '../editor/extensions/SoftMatrixBlock';
+import {
+  analyzeProbabilityTree,
+  parseProbabilityTreeConfig,
+  type ProbabilityTreeConfig,
+} from '../editor/extensions/SoftProbabilityTree';
+import {
+  parseSurface3DConfig,
+  type Surface3DConfig,
+} from '../editor/extensions/SoftSurface3D';
+import {
   parseVariationTableConfig,
   type VariationBoundaryValue,
   type VariationTableConfig,
 } from '../editor/extensions/SoftVariationTable';
+import { stripExamSolutionsFromMarkdown } from './examModeService';
+import {
+  exportLatexMacrosPreamble,
+  type KatexMacroEntry,
+} from './katexMacrosService';
+import { matrixBlockConfigToLatex } from './matrixService';
 
 export interface LatexExportOptions {
   title: string;
   content: string;
   author?: string;
+  excludeSolutions?: boolean;
+  macros?: KatexMacroEntry[];
 }
 
 const ACADEMIC_ENV_MAP = {
@@ -227,6 +251,21 @@ export function inlineMarkdownToLatex(text: string): string {
     let work = segment;
 
     work = work.replace(
+      /\\(eq)?ref\{([^}]+)\}/g,
+      (_m, eqPrefix: string | undefined, lbl: string) =>
+        pushToken(`\\${eqPrefix ? 'eqref' : 'ref'}{${lbl.trim()}}`)
+    );
+
+    work = work.replace(
+      /(^|[^!])\[\[([^[\]]+?)\]\]/g,
+      (_m, prefix: string, inner: string) => {
+        const pipeIdx = inner.indexOf('|');
+        const display = (pipeIdx !== -1 ? inner.slice(pipeIdx + 1) : inner).trim();
+        return `${prefix}${pushToken(`\\textit{${escapeLatexText(display)}}`)}`;
+      }
+    );
+
+    work = work.replace(
       /!\[([^\]]*)\]\(([^)]+)\)/g,
       (_m, alt: string, url: string) =>
         pushToken(
@@ -438,6 +477,91 @@ export function functionPlotToLatex(config: FunctionPlotConfig): string {
   return lines.join('\n');
 }
 
+export function probabilityTreeToLatex(config: ProbabilityTreeConfig): string {
+  const analysis = analyzeProbabilityTree(config);
+  const lines: string[] = [];
+  lines.push('\\begin{center}');
+  lines.push('\\fbox{\\parbox{0.92\\linewidth}{');
+  lines.push(
+    `\\textbf{Arbre de probabilités : ${inlineMarkdownToLatex(config.title || 'Arbre pondéré')}}`
+  );
+  lines.push('\\\\[4pt]');
+  if (analysis.leaves.length > 0) {
+    lines.push('\\begin{itemize}');
+    for (const leaf of analysis.leaves) {
+      const pathMath = leaf.pathLabels.map((l) => stripOuterDollarMath(l)).join(' \\cap ');
+      lines.push(
+        `  \\item $P(${pathMath}) = ${escapeLatexText(leaf.probabilityString)}$`
+      );
+    }
+    lines.push('\\end{itemize}');
+  }
+  if (analysis.targetTotalProb !== null && analysis.targetEvent) {
+    lines.push(
+      `Probabilités totales : $P(${stripOuterDollarMath(analysis.targetEvent)}) = ${analysis.targetTotalProb.toFixed(4).replace(/\.?0+$/, '')}$.`
+    );
+  }
+  lines.push('}}');
+  lines.push('\\end{center}');
+  return lines.join('\n');
+}
+
+export function surface3dToLatex(config: Surface3DConfig): string {
+  const lines: string[] = [];
+  lines.push('\\begin{center}');
+  lines.push('\\fbox{\\parbox{0.92\\linewidth}{');
+  lines.push(
+    `\\textbf{Surface 3D : ${inlineMarkdownToLatex(config.title || 'Surface')}}`
+  );
+  lines.push('\\\\[4pt]');
+  lines.push(
+    `Équation : $z = \\text{\\texttt{${escapeLatexText(config.expression)}}}$ sur $[${config.xMin}, ${config.xMax}] \\times [${config.yMin}, ${config.yMax}]$.`
+  );
+  lines.push('}}');
+  lines.push('\\end{center}');
+  return lines.join('\n');
+}
+
+export function geometry2dToLatex(config: Geometry2DConfig): string {
+  const analysis = analyzeGeometry2D(config);
+  const lines: string[] = [];
+  lines.push('\\begin{center}');
+  lines.push('\\fbox{\\parbox{0.92\\linewidth}{');
+  lines.push(
+    `\\textbf{Géométrie 2D : ${inlineMarkdownToLatex(config.title || 'Figure du plan')}}`
+  );
+  lines.push('\\\\[4pt]');
+  if (config.points.length > 0) {
+    const pts = config.points
+      .map((p) => `$${escapeLatexText(p.name)}(${p.x}, ${p.y})$`)
+      .join(', ');
+    lines.push(`Points : ${pts}.`);
+  }
+  if (analysis.shapes.length > 0 || analysis.circles.length > 0) {
+    lines.push('\\begin{itemize}');
+    for (const s of analysis.shapes) {
+      if (s.kind === 'vector') {
+        lines.push(
+          `  \\item $\\overrightarrow{${escapeLatexText(s.fromName + s.toName)}}(${s.dx.toFixed(2).replace(/\.00$/, '')};\\, ${s.dy.toFixed(2).replace(/\.00$/, '')})$, norme $${s.length.toFixed(2)}$`
+        );
+      } else {
+        lines.push(
+          `  \\item $[${escapeLatexText(s.fromName + s.toName)}]$ : longueur $${s.length.toFixed(2)}$, droite $${escapeLatexText(s.reducedEquation)}$`
+        );
+      }
+    }
+    for (const c of analysis.circles) {
+      lines.push(
+        `  \\item Cercle de centre $${escapeLatexText(c.centerName)}$ et rayon $${c.radius.toFixed(2)}$ : $${c.equation}$`
+      );
+    }
+    lines.push('\\end{itemize}');
+  }
+  lines.push('}}');
+  lines.push('\\end{center}');
+  return lines.join('\n');
+}
+
 interface ListEntry {
   indent: number;
   ordered: boolean;
@@ -560,9 +684,19 @@ export function markdownToLatexBody(markdown: string): string {
 
     // 2. Display math $$ ... $$
     if (trimmed.startsWith('$$')) {
+      const formatDisplayMath = (rawInner: string): string => {
+        const eqMeta = parseBlockMathMeta(rawInner);
+        const body = eqMeta.body.trim();
+        if (eqMeta.numbered) {
+          const labelCmd = eqMeta.label ? `\n\\label{${eqMeta.label}}` : '';
+          return `\\begin{equation}${labelCmd}\n${body}\n\\end{equation}`;
+        }
+        return `\\[\n${body}\n\\]`;
+      };
+
       if (trimmed.length > 4 && trimmed.endsWith('$$')) {
         const expr = trimmed.slice(2, -2).trim();
-        blocks.push(`\\[\n${expr}\n\\]`);
+        blocks.push(formatDisplayMath(expr));
         i += 1;
         continue;
       }
@@ -584,7 +718,7 @@ export function markdownToLatexBody(markdown: string): string {
         mathLines.push(lines[j]);
         j += 1;
       }
-      blocks.push(`\\[\n${mathLines.join('\n').trim()}\n\\]`);
+      blocks.push(formatDisplayMath(mathLines.join('\n').trim()));
       i = j + 1;
       continue;
     }
@@ -604,6 +738,20 @@ export function markdownToLatexBody(markdown: string): string {
         blocks.push(variationTableToLatex(parseVariationTableConfig(rawBody)));
       } else if (lang === 'softmath-plot') {
         blocks.push(functionPlotToLatex(parseFunctionPlotConfig(rawBody)));
+      } else if (lang === 'softmath-matrix') {
+        const cfg = parseMatrixBlockConfig(rawBody);
+        const titlePrefix = cfg.title.trim()
+          ? `\\textbf{${inlineMarkdownToLatex(cfg.title.trim())}}\\\\[0.4em]\n`
+          : '';
+        blocks.push(
+          `\\begin{center}\n${titlePrefix}\\[\n${matrixBlockConfigToLatex(cfg)}\n\\]\n\\end{center}`
+        );
+      } else if (lang === 'softmath-proba') {
+        blocks.push(probabilityTreeToLatex(parseProbabilityTreeConfig(rawBody)));
+      } else if (lang === 'softmath-3d') {
+        blocks.push(surface3dToLatex(parseSurface3DConfig(rawBody)));
+      } else if (lang === 'softmath-geometry') {
+        blocks.push(geometry2dToLatex(parseGeometry2DConfig(rawBody)));
       } else {
         blocks.push(`\\begin{verbatim}\n${rawBody}\n\\end{verbatim}`);
       }
@@ -749,7 +897,13 @@ export function markdownToLatexBody(markdown: string): string {
  */
 export function exportNoteToLatex(options: LatexExportOptions): string {
   const titleLatex = inlineMarkdownToLatex(options.title.trim() || 'Sans titre');
-  const bodyLatex = markdownToLatexBody(options.content);
+  const effectiveMarkdown = options.excludeSolutions
+    ? stripExamSolutionsFromMarkdown(options.content, {
+        proofPlaceholder: ':::proof\n\\textit{(À compléter — Mode Examen)}\n:::',
+      })
+    : options.content;
+  const bodyLatex = markdownToLatexBody(effectiveMarkdown);
+  const macrosPreamble = exportLatexMacrosPreamble(options.macros);
   const authorLine = options.author?.trim()
     ? `\\author{${escapeLatexText(options.author.trim())}}\n`
     : '\\author{}\n';
@@ -771,6 +925,7 @@ export function exportNoteToLatex(options: LatexExportOptions): string {
     '\\newtheorem{softexo}{Exercice}[section]',
     '\\theoremstyle{plain}',
     '\\newtheorem{softtheo}{Théorème}[section]',
+    ...(macrosPreamble ? ['', '% Macros KaTeX / LaTeX personnalisées', macrosPreamble] : []),
     '',
     `\\title{${titleLatex}}`,
     authorLine.trimEnd(),
